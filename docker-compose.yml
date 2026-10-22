@@ -1,0 +1,67 @@
+# 로컬 개발용 스택 (Kafka · PostgreSQL · Spark · Airflow)
+# 전부 띄우면 무거우니, 처음엔 kafka + postgres만 올리고 시작하는 걸 추천.
+#   docker compose up -d kafka postgres
+# 메모리는 Docker에 8GB 이상 할당하세요.
+
+services:
+  # ---------- Kafka (KRaft 모드, 단일 브로커) ----------
+  kafka:
+    image: apache/kafka:3.7.0
+    container_name: kafka
+    ports:
+      - "9092:9092"
+    environment:
+      KAFKA_NODE_ID: 1
+      KAFKA_PROCESS_ROLES: broker,controller
+      KAFKA_CONTROLLER_QUORUM_VOTERS: 1@kafka:9093
+      KAFKA_LISTENERS: PLAINTEXT://:9092,CONTROLLER://:9093
+      KAFKA_ADVERTISED_LISTENERS: PLAINTEXT://localhost:9092
+      KAFKA_CONTROLLER_LISTENER_NAMES: CONTROLLER
+      KAFKA_LISTENER_SECURITY_PROTOCOL_MAP: CONTROLLER:PLAINTEXT,PLAINTEXT:PLAINTEXT
+      KAFKA_OFFSETS_TOPIC_REPLICATION_FACTOR: 1
+      KAFKA_AUTO_CREATE_TOPICS_ENABLE: "true"   # 스켈레톤 편의용. 운영에선 끄고 명시 생성
+      # TODO: bs.battles 토픽을 명시 생성하며 파티션 수 지정 (player_tag 분배용), bs.dlq도
+
+  # ---------- PostgreSQL (탐지 결과 저장 + Airflow 메타DB) ----------
+  postgres:
+    image: postgres:16
+    container_name: postgres
+    ports:
+      - "5432:5432"
+    environment:
+      POSTGRES_USER: brawl
+      POSTGRES_PASSWORD: brawl       # TODO: .env로 빼기
+      POSTGRES_DB: brawlstars
+    volumes:
+      - ./schema.sql:/docker-entrypoint-initdb.d/schema.sql:ro
+      - pgdata:/var/lib/postgresql/data
+
+  # ---------- Spark (local 모드로 시작해도 됨. 클러스터 필요해지면 활성화) ----------
+  spark:
+    image: bitnami/spark:3.5.1
+    container_name: spark
+    environment:
+      SPARK_MODE: master
+    ports:
+      - "8080:8080"   # Spark master UI
+      - "7077:7077"
+    # TODO: preprocess.py를 spark-submit으로 실행. 처음엔 로컬 pyspark로 돌리는 게 편함.
+
+  # ---------- Airflow (standalone. 운영 설계는 5회차에) ----------
+  airflow:
+    image: apache/airflow:2.9.2
+    container_name: airflow
+    depends_on:
+      - postgres
+    environment:
+      AIRFLOW__CORE__EXECUTOR: LocalExecutor
+      AIRFLOW__DATABASE__SQL_ALCHEMY_CONN: postgresql+psycopg2://brawl:brawl@postgres/brawlstars
+      AIRFLOW__CORE__LOAD_EXAMPLES: "false"
+    ports:
+      - "8081:8080"   # Airflow 웹 UI
+    volumes:
+      - ./dag.py:/opt/airflow/dags/dag.py:ro
+    command: standalone
+
+volumes:
+  pgdata:

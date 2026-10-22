@@ -1,0 +1,20 @@
+# 데이터 (배틀로그 JSON/Parquet은 커밋하지 않음)
+data/
+*.parquet
+
+# 환경변수 (API 토큰)
+.env
+
+# 과제 제출용 zip (소스 repo에는 제외)
+*.zip
+
+# 파이썬
+__pycache__/
+*.pyc
+.venv/
+venv/
+
+# Airflow 런타임
+logs/
+airflow.db
+airflow.cfg
