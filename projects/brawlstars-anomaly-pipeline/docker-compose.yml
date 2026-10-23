@@ -63,5 +63,23 @@ services:
       - ./dag.py:/opt/airflow/dags/dag.py:ro
     command: standalone
 
+  # ---------- Grafana (모니터링 대시보드 + 알림) ----------
+  grafana:
+    image: grafana/grafana:11.1.0
+    container_name: grafana
+    depends_on:
+      - postgres
+    ports:
+      - "3000:3000"   # Grafana 웹 UI (admin / admin)
+    environment:
+      GF_SECURITY_ADMIN_PASSWORD: admin   # TODO: .env로 빼기
+    volumes:
+      - grafana-data:/var/lib/grafana
+    # 데이터 소스 설정은 UI에서:
+    #   - PostgreSQL(brawlstars) → 탐지 결과·집계 지표 패널
+    #   - (TODO) Prometheus → Kafka consumer lag·Spark 처리량 등 시스템 지표
+    #     (kafka-exporter / spark metrics + prometheus 컨테이너 추가 필요)
+
 volumes:
   pgdata:
+  grafana-data:

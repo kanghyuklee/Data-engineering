@@ -79,12 +79,13 @@ API에 rate limit 있음. 실시간으로 계속 당기면 6회차 부하 테스
 
 ![파이프라인 구조도](./architecture.png)
 
-흐름 — 브롤스타즈 API에서 배틀로그 수집 + 가짜 이상 계정 혼합 → 리플레이 생성기로 재생(①) → Kafka 수신(②) → Spark가 계정별로 승률·연승·플레이 간격·트로피 변화 집계 후 이상 스코어 산정(③) → 결과는 PostgreSQL, 원본은 Parquet 저장(④) → FastAPI·Streamlit으로 노출(⑤). 전 구간을 Airflow가 오케스트레이션, 모니터링이 관측.
+흐름 — 브롤스타즈 API에서 배틀로그 수집 + 가짜 이상 계정 혼합 → 리플레이 생성기로 재생(①) → Kafka 수신(②) → Spark가 계정별로 승률·연승·플레이 간격·트로피 변화 집계 후 이상 스코어 산정(③) → 결과는 PostgreSQL, 원본은 Parquet 저장(④) → FastAPI·Streamlit으로 노출(⑤). 전 구간을 Airflow가 오케스트레이션, Grafana로 모니터링.
 
 - 수집→Kafka — JSON 이벤트, 배속 재생, `key=player_tag`
 - Kafka→Spark — micro-batch(trigger 1분), 계정별 집계
 - Spark→PG — 탐지 결과 upsert(player_tag 기준)
 - Spark→Parquet — 원본 append, 날짜(dt=) 파티셔닝, 재처리용
+- 전 구간→Grafana — 처리량·consumer lag·에러율·탐지 지연 관측 + 임계 초과 시 알림
 
 ## 3. 플랫폼 선정 이유 (ADR: 맥락·결정·대안·트레이드오프)
 
@@ -112,6 +113,12 @@ API에 rate limit 있음. 실시간으로 계속 당기면 6회차 부하 테스
 - 대안 — 한쪽만 사용.
 - 트레이드오프 — 저장 로직 두 벌 관리. 결과·원본 간 일관성 신경 써야 함.
 
+### 모니터링 (Grafana)
+- 맥락 — 부하 시 처리량·consumer lag·에러율·탐지 지연을 한눈에 보고, 기준 초과 시 알림 필요(6회차 로드 테스트 핵심 지표).
+- 결정 — Grafana 대시보드 + 알림. 데이터 소스는 PostgreSQL(탐지·집계 지표) + Prometheus(Kafka/Spark 시스템 지표).
+- 대안 — 로그만 보기, 또는 Streamlit에 모니터링까지 몰기.
+- 트레이드오프 — 모니터링 컴포넌트가 하나 늘어남. 다만 시스템 관측은 Grafana가 표준이라, 결과 조회(Streamlit)와 시스템 모니터링(Grafana)을 분리하는 게 깔끔함.
+
 ## 4. 레포 구조 (최종 산출물까지)
 
 ```
@@ -123,7 +130,7 @@ brawlstars-anomaly-pipeline/
 ├─ preprocess.py        # Spark 전처리·계정별 집계·이상 스코어
 ├─ dag.py               # Airflow DAG (수집~집계·품질체크)
 ├─ schema.sql           # PostgreSQL 저장 스키마
-├─ docker-compose.yml   # Kafka(KRaft)·Spark·Airflow·PostgreSQL
+├─ docker-compose.yml   # Kafka(KRaft)·Spark·Airflow·PostgreSQL·Grafana
 ├─ api/                 # (선택) FastAPI 서빙 + Streamlit 대시보드
 └─ README.md
 ```
