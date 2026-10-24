@@ -3,6 +3,9 @@
 # 사용: bash create_topics.sh
 set -e
 
+# Git Bash(MSYS)가 /opt/... 경로를 Windows 경로로 자동 변환하는 것 방지
+export MSYS_NO_PATHCONV=1
+
 EXEC="docker compose exec kafka /opt/kafka/bin/kafka-topics.sh --bootstrap-server localhost:9092"
 
 # bs.battles — 배틀 이벤트 메인 토픽
