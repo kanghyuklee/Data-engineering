@@ -130,6 +130,8 @@ brawlstars-anomaly-pipeline/
 ├─ preprocess.py        # Spark 전처리·계정별 집계·이상 스코어
 ├─ dag.py               # Airflow DAG (수집~집계·품질체크)
 ├─ schema.sql           # PostgreSQL 저장 스키마
+├─ create_topics.sh     # Kafka 토픽(bs.battles·bs.dlq) 생성
+├─ make_sample.py       # 토큰 없이 테스트용 가짜 배틀로그 생성
 ├─ docker-compose.yml   # Kafka(KRaft)·Spark·Airflow·PostgreSQL·Grafana
 ├─ api/                 # (선택) FastAPI 서빙 + Streamlit 대시보드
 └─ README.md
@@ -147,6 +149,52 @@ brawlstars-anomaly-pipeline/
 
 - [ ] 오늘 받은 피드백을 README·구조도에 반영
 - [ ] `developer.brawlstars.com` 토큰 발급 + 등록 IP 확인
-- [ ] Kafka 로컬 실행 + `bs.battles` 토픽 생성 확인
+- [ ] Kafka 로컬 실행 + `bs.battles` 토픽 생성 확인 (`bash create_topics.sh`)
 - [ ] `replay_producer.py`로 보내고 콘솔 consumer로 읽어보기
-- [ ] 공통 메시지 껍데기(key·event_id·event_type·event_time·schema_version·source·payload) + `--rate` 옵션 + 전송 콜백 적용
+- [x] 공통 메시지 껍데기 + `--rate` 옵션 + 전송 콜백 적용 (아래 7번)
+
+## 7. Kafka 수집 (3회차 구현)
+
+### Producer 흐름
+
+```
+읽기(배틀로그 JSON) → 공통 껍데기로 감싸 직렬화(JSON bytes) → 전송(send) → 콜백으로 성공/실패 확인
+```
+
+`replay_producer.py`가 담당. 안정성 설정은 `acks=all`(모든 복제본 확인), `enable_idempotence=true`(재시도해도 중복 저장 안 됨), `compression.type=lz4`(압축). 전송 결과는 **콜백**으로 확인해 실패를 놓치지 않음.
+
+### 메시지 예시 (공통 껍데기 + payload)
+
+```jsonc
+key = "#ABC"                       // player_tag → 같은 계정 순서 보장
+{
+  "event_id":       "20260115T120000Z_#ABC",  // 중복 제거·멱등 저장 기준
+  "event_type":     "battle",                  // 이벤트 종류
+  "event_time":     "2026-01-15T12:00:00Z",    // 발생 시각
+  "schema_version": 1,                         // 필드 바뀌어도 consumer 안 깨짐
+  "source":         "replay-generator",        // 출처
+  "payload": {                                 // 종류별 실제 데이터
+    "battle_id": "a1b2c3", "player_tag": "#ABC",
+    "mode": "gemGrab", "result": "victory", "trophy_change": 8,
+    "brawler_name": "SHELLY", "opponents": ["#DEF", "#GHI"],
+    "is_injected": 0
+  }
+}
+```
+
+### Topic 구성
+
+| 항목 | 값 | 이유 |
+|---|---|---|
+| 토픽명 | `bs.battles` | 배틀 이벤트 전용 (실패 메시지는 `bs.dlq`로 분리) |
+| 파티션 | 3 | 병렬 처리 상한. 로컬 3개로 시작 → 6회차에 늘려가며 처리량 측정 |
+| key | `player_tag` | 같은 계정 이벤트의 순서 보장 (승률·연승 계산에 필요) |
+| 리텐션 | 7일 | 재처리 가능 기간. 앞의 용량 계산과 함께 결정 |
+
+### 실행
+
+```bash
+docker compose up -d kafka            # Kafka 기동
+bash create_topics.sh                 # 토픽 생성
+python replay_producer.py --in data/raw --rate 300   # 전송 (초당 300건)
+```

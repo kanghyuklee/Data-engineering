@@ -1,6 +1,7 @@
 # 파이프라인 공통 의존성 (스켈레톤 기준)
 requests==2.32.3         # 브롤스타즈 API 호출
 kafka-python==2.0.2      # Kafka producer/consumer
+lz4==4.3.3               # Kafka 메시지 lz4 압축
 pyspark==3.5.1           # Spark Structured Streaming
 pyarrow==16.1.0          # Parquet 읽기/쓰기
 psycopg2-binary==2.9.9   # PostgreSQL 연결
