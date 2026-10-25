@@ -10,7 +10,7 @@ make_sample.py
 실행 예:
   python make_sample.py --players 50 --out data/sample
 그다음:
-  python replay_producer.py --in data/sample --speed 50
+  python producer.py --in data/sample --rate 50
 
 주의: 실데이터(fetch_battlelogs)는 data/raw 에 쌓이므로, 샘플은 data/sample 로 분리해 섞이지 않게 한다.
 """

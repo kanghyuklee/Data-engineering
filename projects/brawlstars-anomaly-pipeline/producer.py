@@ -1,5 +1,5 @@
 """
-replay_producer.py
+producer.py
 ------------------
 저장된 배틀로그 JSON들을 읽어서 '한 배틀 = 한 이벤트'로 만들어 Kafka로 재생한다.
 battleTime 순서로 정렬해 내보내고, --rate로 초당 전송 건수를 조절한다. (6회차 로드 테스트 핵심)
@@ -7,9 +7,9 @@ battleTime 순서로 정렬해 내보내고, --rate로 초당 전송 건수를 �
 Producer 흐름:  읽기 → 공통 껍데기로 감싸 직렬화 → 전송 → 콜백으로 성공/실패 확인
 
 실행 예:
-  python replay_producer.py --in data/raw --rate 300        # 초당 300건
-  python replay_producer.py --in data/raw --rate 30000      # 부하 테스트
-  python replay_producer.py --in data/raw --rate 0          # 최대 속도(대기 없음)
+  python producer.py --in data/raw --rate 300        # 초당 300건
+  python producer.py --in data/raw --rate 30000      # 부하 테스트
+  python producer.py --in data/raw --rate 0          # 최대 속도(대기 없음)
 """
 
 import argparse

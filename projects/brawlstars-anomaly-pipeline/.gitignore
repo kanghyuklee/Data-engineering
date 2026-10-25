@@ -9,7 +9,7 @@ data/
 *.zip
 
 # 디스코드 제출용 증빙 스크린샷 (로컬 전용, architecture.png는 예외로 커밋됨)
-*_capture.png
+*_capture*.png
 
 # 파이썬
 __pycache__/

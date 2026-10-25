@@ -124,7 +124,7 @@ API에 rate limit 있음. 실시간으로 계속 당기면 6회차 부하 테스
 ```
 brawlstars-anomaly-pipeline/
 ├─ fetch_battlelogs.py  # 브롤스타즈 API 크롤 → 배틀로그 JSON 저장
-├─ replay_producer.py   # 배틀로그를 battle 이벤트로 재생해 Kafka로, 속도 조절
+├─ producer.py   # 배틀로그를 battle 이벤트로 재생해 Kafka로, 속도 조절
 ├─ anomaly_injector.py  # 가짜 이상 계정(봇·부스팅) 배틀 주입 (라벨)
 ├─ consumer.py          # Kafka 수신 → 원본 Parquet 적재
 ├─ preprocess.py        # Spark 전처리·계정별 집계·이상 스코어
@@ -150,7 +150,7 @@ brawlstars-anomaly-pipeline/
 - [ ] 오늘 받은 피드백을 README·구조도에 반영
 - [ ] `developer.brawlstars.com` 토큰 발급 + 등록 IP 확인
 - [ ] Kafka 로컬 실행 + `bs.battles` 토픽 생성 확인 (`bash create_topics.sh`)
-- [ ] `replay_producer.py`로 보내고 콘솔 consumer로 읽어보기
+- [ ] `producer.py`로 보내고 콘솔 consumer로 읽어보기
 - [x] 공통 메시지 껍데기 + `--rate` 옵션 + 전송 콜백 적용 (아래 7번)
 
 ## 7. Kafka 수집 (3회차 구현)
@@ -161,7 +161,7 @@ brawlstars-anomaly-pipeline/
 읽기(배틀로그 JSON) → 공통 껍데기로 감싸 직렬화(JSON bytes) → 전송(send) → 콜백으로 성공/실패 확인
 ```
 
-`replay_producer.py`가 담당. 안정성 설정은 `acks=all`(모든 복제본 확인), `enable_idempotence=true`(재시도해도 중복 저장 안 됨), `compression.type=lz4`(압축). 전송 결과는 **콜백**으로 확인해 실패를 놓치지 않음.
+`producer.py`가 담당. 안정성 설정은 `acks=all`(모든 복제본 확인), `enable_idempotence=true`(재시도해도 중복 저장 안 됨), `compression.type=lz4`(압축). 전송 결과는 **콜백**으로 확인해 실패를 놓치지 않음.
 
 ### 메시지 예시 (공통 껍데기 + payload)
 
@@ -196,5 +196,5 @@ key = "#ABC"                       // player_tag → 같은 계정 순서 보장
 ```bash
 docker compose up -d kafka            # Kafka 기동
 bash create_topics.sh                 # 토픽 생성
-python replay_producer.py --in data/raw --rate 300   # 전송 (초당 300건)
+python producer.py --in data/raw --rate 300   # 전송 (초당 300건)
 ```

@@ -4,7 +4,7 @@ anomaly_injector.py
 정상 배틀로그 일부를 바탕으로 '봇·부스팅·승부조작처럼' 보이는 가짜 이상 계정 배틀을 만든다.
 is_injected=1 라벨을 심어두면 나중에 탐지 정확도(precision/recall)를 평가할 수 있다.
 
-replay_producer가 읽는 JSON과 같은 포맷으로 내보내되, 각 배틀 dict에 "_injected": 1 을 넣는다.
+producer가 읽는 JSON과 같은 포맷으로 내보내되, 각 배틀 dict에 "_injected": 1 을 넣는다.
 
 실행 예:
   python anomaly_injector.py --in data/raw --out data/raw_mixed --ratio 0.05
