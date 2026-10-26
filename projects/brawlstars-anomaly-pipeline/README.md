@@ -24,7 +24,8 @@
 
 수집 방식 — 랭킹에서 시작 태그 확보 → 각 태그 배틀로그 수집 → 배틀에 나온 상대 태그로 확장(크롤).
 
-API에 rate limit 있음. 실시간으로 계속 당기면 6회차 부하 테스트 불가(강의자료도 지적). 따라서 배틀로그를 한 번 모아 JSON으로 저장 → 리플레이 생성기가 battleTime 순서로 배속 재생해 Kafka로 전송. 실데이터를 쓰되 속도는 직접 조절함.
+API에 rate limit 있음. 실시간으로 계속 당기면 6회차 부하 테스트 불가. 
+따라서 배틀로그를 한 번 모아 JSON으로 저장 → 리플레이 생성기가 battleTime 순서로 배속 재생해 Kafka로 전송. 실데이터를 쓰되 속도는 직접 조절함.
 
 ### 이벤트 단위·스키마
 
@@ -137,23 +138,7 @@ brawlstars-anomaly-pipeline/
 └─ README.md
 ```
 
-## 5. 2회차 과제 체크리스트
-
-- [x] 사용 데이터 설명 (스키마·발생 속도·크기) — 1번
-- [x] 전체 파이프라인 구조도 — 2번
-- [x] 플랫폼 선정 이유 (ADR) — 3번
-- [ ] 샘플 크기·재생 속도 수치 확정 (1번 TODO)
-- [ ] 디스코드 과제 채널 제출 (10/22 20:00 전)
-
-## 6. 다음 준비 (3회차 과제: Kafka 수집, 마감 10/26 20:00)
-
-- [ ] 오늘 받은 피드백을 README·구조도에 반영
-- [ ] `developer.brawlstars.com` 토큰 발급 + 등록 IP 확인
-- [ ] Kafka 로컬 실행 + `bs.battles` 토픽 생성 확인 (`bash create_topics.sh`)
-- [ ] `producer.py`로 보내고 콘솔 consumer로 읽어보기
-- [x] 공통 메시지 껍데기 + `--rate` 옵션 + 전송 콜백 적용 (아래 7번)
-
-## 7. Kafka 수집 (3회차 구현)
+## 5. Kafka 수집
 
 ### Producer 흐름
 
@@ -176,11 +161,15 @@ key = "#ABC"                       // player_tag → 같은 계정 순서 보장
   "payload": {                                 // 종류별 실제 데이터
     "battle_id": "a1b2c3", "player_tag": "#ABC",
     "mode": "gemGrab", "result": "victory", "trophy_change": 8,
-    "brawler_name": "SHELLY", "opponents": ["#DEF", "#GHI"],
+    "brawler_name": "SHELLY",
+    "teammates": ["#DEF"],                     // 같은 팀(나 제외) → 팀 어뷰징 탐지
+    "opponents": ["#GHI", "#JKL"],             // 상대 팀만 → 승부조작 탐지
     "is_injected": 0
   }
 }
 ```
+
+> **피드백 반영 — 팀원/상대 분리**: 기존엔 `opponents`를 "나를 뺀 전원"으로 잡아서 **팀원이 상대에 섞였음**. 배틀 데이터의 `teams`(팀 2개 리스트)에서 **내가 속한 팀 → `teammates`, 나머지 팀 → `opponents`**로 분리하도록 수정함. 이렇게 해야 **승부조작**(상대 반복)과 **팀 어뷰징/듀오 부스팅**(팀원 반복)을 각각 정확히 탐지할 수 있음.
 
 ### Topic 구성
 

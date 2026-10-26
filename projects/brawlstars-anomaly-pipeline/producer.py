@@ -68,17 +68,23 @@ def to_payload(owner_tag: str, b: dict) -> dict | None:
     event = b.get("event", {})
     teams = battle.get("teams") or []
 
-    # 팀 모드만 우선 처리. TODO: 쇼다운(players 키) 분기 / 팀원-상대 구분
+    # 팀원/상대 분리 (피드백 반영):
+    #   teams는 팀 2개(리스트의 리스트). 내가 속한 팀 → teammates, 나머지 팀 → opponents.
+    #   기존엔 "나 빼고 전부"라 팀원이 상대에 섞였음 → 승부조작 탐지가 부정확했음.
+    # TODO: 쇼다운(players 키, 팀 없는 솔로 모드) 분기
     all_tags, me = [], None
+    teammates, opponents = [], []
     for team in teams:
-        for p in team:
-            all_tags.append(p["tag"])
-            if p["tag"] == owner_tag:
-                me = p
+        tags = [p["tag"] for p in team]
+        all_tags += tags
+        if owner_tag in tags:                                  # 내가 속한 팀
+            me = next(p for p in team if p["tag"] == owner_tag)
+            teammates = [t for t in tags if t != owner_tag]    # 나 제외 = 팀원
+        else:                                                  # 내가 없는 팀 = 상대
+            opponents += tags
     if me is None:
         return None
 
-    opponents = [t for t in all_tags if t != owner_tag]
     bt = b["battleTime"]
     brawler = me.get("brawler", {})
     star = battle.get("starPlayer") or {}
@@ -97,7 +103,8 @@ def to_payload(owner_tag: str, b: dict) -> dict | None:
         "brawler_name": brawler.get("name"),
         "brawler_power": brawler.get("power"),
         "brawler_trophies": brawler.get("trophies"),
-        "opponents": opponents,
+        "teammates": teammates,        # 같은 팀(나 제외) → 듀오/팀 어뷰징 탐지용
+        "opponents": opponents,        # 상대 팀만 → 승부조작 탐지용
         "is_injected": int(b.get("_injected", 0)),
     }
 
