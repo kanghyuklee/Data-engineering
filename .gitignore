@@ -1,0 +1,6 @@
+# Claude Code 로컬 설정·스킬 (개인 작업용 — 공개 repo엔 배포 제외)
+.claude/
+
+# OS
+.DS_Store
+Thumbs.db
