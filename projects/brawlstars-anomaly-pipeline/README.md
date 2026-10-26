@@ -187,3 +187,19 @@ docker compose up -d kafka            # Kafka 기동
 bash create_topics.sh                 # 토픽 생성
 python producer.py --in data/raw --rate 300   # 전송 (초당 300건)
 ```
+
+## 6. 트러블슈팅 기록 (수집 구현 중 겪은 이슈)
+
+에러 메시지(근거)로 원인을 좁혀 해결한 기록. 모두 실제로 겪은 사례.
+
+| 증상 | 확인한 근거 | 원인 | 해결 / 다음 행동 |
+|---|---|---|---|
+| `OCI runtime exec failed: .../Git/opt/kafka/...` | 에러 속 경로가 Git 설치폴더로 바뀜 | Git Bash(MSYS)가 `/opt/...`를 Windows 경로로 자동 변환 | `MSYS_NO_PATHCONV=1` 적용 (create_topics.sh에 내장) |
+| 전송/수신 로그 한글 `▒▒▒` | 콘솔 출력만 깨짐(데이터는 정상) | 콘솔 인코딩(cp949) | `PYTHONUTF8=1 python ...` 로 실행 |
+| `python producer.py` → `No such file` | 에러 메시지 | 상위 폴더에서 실행(파일은 `projects/...` 하위) | 프로젝트 폴더로 `cd` 후 실행 |
+| `docker compose up` → `no configuration file provided` | 에러 메시지 | compose 파일 없는 폴더에서 실행 | 프로젝트 폴더에서 실행 |
+| `git push` → `rejected (fetch first)` | push 거부 메시지 | 원격에 먼저 올라간 커밋 존재 | `git fetch` + `git rebase` 후 push |
+| `bash` 실행 실패 (`execvpe /bin/bash`) | 에러 메시지 | PowerShell의 `bash`가 미설정 WSL로 연결 | **Git Bash**에서 실행 |
+| (API) `403 Forbidden` | 응답 코드 | 토큰 등록 IP와 현재 IP 불일치 | developer 포털에서 현재 IP로 키 재발급 |
+
+> 핵심: 증상이 나오면 **에러 메시지를 근거로 원인을 하나씩 좁혀** 해결함. 환경(Windows/Git Bash) 이슈가 대부분이었고 파이프라인 로직 문제는 아니었음.
