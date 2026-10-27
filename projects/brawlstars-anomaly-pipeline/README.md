@@ -253,12 +253,14 @@ Kafka(bs.battles) ──배치 읽기──▶ 전처리 ──▶ Parquet(정�
 출력 (계정별 탐지 결과, `detection_result`):
 
 ```
-[입력] Kafka 메시지 125건  →  [정제] 118건 (중복·결측 제거 후)   ← 실행 시 실제 숫자
-player_tag   | battles | win_rate | brawler_variety | anomaly_score | anomaly_reason | is_injected
-#8LQCUYPYL   |   25    |  1.00    |       1         |     0.8       |   boosting     |    0
-#2PP0...     |   22    |  0.95    |       1         |     0.6       |   bot          |    1
-#XYZ...      |   18    |  0.50    |       6         |     0.1       |   normal       |    0
+[입력] Kafka 메시지 125건  →  [정제] 125건 (중복·결측 제거 후)
+player_tag   | battles | win_rate | trophy_gain | brawler_variety | anomaly_score | anomaly_reason
+#29C8PULJ9   |   25    |  0.92    |     74      |       6         |     0.8       |   boosting
+#2V8V0QCVJP  |   25    |  0.84    |     60      |       1         |     0.6       |   bot
+#8LQCUYPYL   |   25    |  0.88    |     58      |       1         |     0.6       |   bot
+#QVLRCJQ00   |   25    |  0.84    |     -2      |       5         |     0.1       |   normal
 ```
+(실제 실행 결과. 브롤러 1종류 → bot, 승률 0.9 초과 → boosting, 그 외 normal로 분류됨)
 
 ### 최종 스키마 — `detection_result` (PostgreSQL)
 
