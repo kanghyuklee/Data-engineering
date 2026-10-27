@@ -262,6 +262,35 @@ player_tag   | battles | win_rate | trophy_gain | brawler_variety | anomaly_scor
 ```
 (실제 실행 결과. 브롤러 1종류 → bot, 승률 0.9 초과 → boosting, 그 외 normal로 분류됨)
 
+### 전처리 검증 — 일부러 더러운 데이터 주입 (`dirty_injector.py`)
+
+공식 API 데이터는 깨끗해서 평소엔 `입력 = 정제`(125→125)로 걸러지는 게 안 보인다.
+전처리가 실제로 동작하는지 확인하려고 **일부러 지저분한 메시지를 Kafka에 넣고** 돌려본다.
+
+주입하는 4가지 유형 (각각 어느 단계가 잡는지):
+
+| 더러운 유형 | 잡는 단계 |
+|---|---|
+| 깨진 JSON (파싱 불가) | `from_json` 실패 → `event_id` null → `dropna` |
+| `player_tag` 결측 | `dropna` |
+| `event_time` 이상 문자열 | `to_timestamp` null → `dropna` |
+| 중복 `event_id` (n건) | `dropDuplicates` → 1건만 생존 |
+
+```bash
+PYTHONUTF8=1 python dirty_injector.py        # 유형별 2건 = 8건 주입
+# 그 뒤 preprocess 재실행
+```
+
+실제 결과 — **8건 중 7건 제거** (중복 2건 중 정상 1건만 생존):
+
+```
+[입력] Kafka 메시지 133건  →  [정제] 126건 (중복·결측 제거 후)
+#DIRTYTEST | battles 1 | ... | is_injected 1   ← 중복에서 살아남은 1건
+```
+
+→ `입력 > 정제`로 벌어지는 것 자체가 전처리가 더러운 데이터를 걸러낸다는 증거다.
+(주입한 메시지는 토픽에 남으므로, 초기화하려면 `bs.battles` 토픽을 재생성한다.)
+
 ### 최종 스키마 — `detection_result` (PostgreSQL)
 
 | 필드 | 타입 | 의미 |
