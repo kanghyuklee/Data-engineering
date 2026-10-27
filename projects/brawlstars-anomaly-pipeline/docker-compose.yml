@@ -14,10 +14,14 @@ services:
       KAFKA_NODE_ID: 1
       KAFKA_PROCESS_ROLES: broker,controller
       KAFKA_CONTROLLER_QUORUM_VOTERS: 1@kafka:9093
-      KAFKA_LISTENERS: PLAINTEXT://:9092,CONTROLLER://:9093
-      KAFKA_ADVERTISED_LISTENERS: PLAINTEXT://localhost:9092
+      # 리스너 2개: 호스트(내 PC)용 localhost:9092 + 컨테이너 내부용 kafka:29092
+      #   - producer.py(호스트 실행)        → localhost:9092
+      #   - Spark 컨테이너(preprocess.py)    → kafka:29092
+      KAFKA_LISTENERS: PLAINTEXT://:29092,PLAINTEXT_HOST://:9092,CONTROLLER://:9093
+      KAFKA_ADVERTISED_LISTENERS: PLAINTEXT://kafka:29092,PLAINTEXT_HOST://localhost:9092
+      KAFKA_INTER_BROKER_LISTENER_NAME: PLAINTEXT
       KAFKA_CONTROLLER_LISTENER_NAMES: CONTROLLER
-      KAFKA_LISTENER_SECURITY_PROTOCOL_MAP: CONTROLLER:PLAINTEXT,PLAINTEXT:PLAINTEXT
+      KAFKA_LISTENER_SECURITY_PROTOCOL_MAP: CONTROLLER:PLAINTEXT,PLAINTEXT:PLAINTEXT,PLAINTEXT_HOST:PLAINTEXT
       KAFKA_OFFSETS_TOPIC_REPLICATION_FACTOR: 1
       KAFKA_AUTO_CREATE_TOPICS_ENABLE: "true"   # 스켈레톤 편의용. 운영에선 끄고 명시 생성
       # TODO: bs.battles 토픽을 명시 생성하며 파티션 수 지정 (player_tag 분배용), bs.dlq도
@@ -36,16 +40,25 @@ services:
       - ./schema.sql:/docker-entrypoint-initdb.d/schema.sql:ro
       - pgdata:/var/lib/postgresql/data
 
-  # ---------- Spark (local 모드로 시작해도 됨. 클러스터 필요해지면 활성화) ----------
+  # ---------- Spark (preprocess.py 실행 — Kafka에서 읽어 전처리·저장) ----------
   spark:
     image: bitnami/spark:3.5.1
     container_name: spark
+    depends_on:
+      - kafka
+      - postgres
     environment:
       SPARK_MODE: master
     ports:
       - "8080:8080"   # Spark master UI
       - "7077:7077"
-    # TODO: preprocess.py를 spark-submit으로 실행. 처음엔 로컬 pyspark로 돌리는 게 편함.
+    volumes:
+      - .:/app        # 프로젝트를 /app으로 마운트 (preprocess.py 실행, data/parquet 저장)
+    working_dir: /app
+    # 실행 (Java/pyspark 로컬 설치 불필요 — 컨테이너 안에서 실행):
+    #   docker compose exec spark spark-submit --master "local[*]" \
+    #     --packages org.apache.spark:spark-sql-kafka-0-10_2.12:3.5.1,org.postgresql:postgresql:42.7.3 \
+    #     /app/preprocess.py
 
   # ---------- Airflow (standalone. 운영 설계는 5회차에) ----------
   airflow:

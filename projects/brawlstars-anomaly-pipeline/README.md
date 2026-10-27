@@ -225,3 +225,75 @@ python producer.py --in data/raw --rate 300   # 전송 (초당 300건)
 
 ### 커밋 순서 원칙
 `처리 → 저장 → (진행위치) commit` 순서. commit을 **먼저** 하면 저장 실패 시 **유실**, **나중에** 하면 중복(멱등으로 해결). 그래서 **commit은 항상 마지막 + 멱등 저장**. (consumer는 `enable_auto_commit=False`)
+
+## 8. 전처리와 저장 (4회차) — `preprocess.py`
+
+### 처리 흐름
+
+```
+Kafka(bs.battles) ──배치 읽기──▶ 전처리 ──▶ Parquet(정제 원본)
+                                    │
+                                    └─집계·이상 스코어─▶ PostgreSQL(탐지 결과)
+```
+
+입력은 **Kafka(`bs.battles`)에서 읽는다** — 파일을 직접 읽으면 Kafka를 쓰는 의미가 없으므로, 수집 구간이 넣어둔 Kafka 데이터를 Spark가 소비한다. (Spark의 `read.format("kafka")`로 `earliest~latest` 전체를 **배치**로 읽음)
+
+### 전처리 단계 (자료 기준)
+
+| 항목 | 처리 | 코드 |
+|---|---|---|
+| 자료형 | `event_time` 문자열 → timestamp(UTC, **발생 시각**) | `to_timestamp` |
+| 결측 | 필수 필드(`event_id`·`player_tag`·`event_time`) 없으면 제거 | `dropna` |
+| 중복 | **`event_id` 기준** 중복 제거 (재실행 중복 흡수) | `dropDuplicates(["event_id"])` |
+| 집계 | 계정별 승률·트로피 증감·브롤러 다양성 | `groupBy("player_tag")` |
+
+### 입력 · 출력 예시
+
+입력 (Kafka 메시지, 공통 껍데기) — §5 참고.
+출력 (계정별 탐지 결과, `detection_result`):
+
+```
+[입력] Kafka 메시지 125건  →  [정제] 118건 (중복·결측 제거 후)   ← 실행 시 실제 숫자
+player_tag   | battles | win_rate | brawler_variety | anomaly_score | anomaly_reason | is_injected
+#8LQCUYPYL   |   25    |  1.00    |       1         |     0.8       |   boosting     |    0
+#2PP0...     |   22    |  0.95    |       1         |     0.6       |   bot          |    1
+#XYZ...      |   18    |  0.50    |       6         |     0.1       |   normal       |    0
+```
+
+### 최종 스키마 — `detection_result` (PostgreSQL)
+
+| 필드 | 타입 | 의미 |
+|---|---|---|
+| `player_tag` | TEXT (PK) | 계정 (고유 키) |
+| `battles` | INT | 집계 대상 배틀 수 |
+| `win_rate` | DOUBLE | 승률 (0~1) |
+| `trophy_gain` | INT | 누적 트로피 증감 |
+| `brawler_variety` | INT | 브롤러 종류 수 (1이면 봇 의심) |
+| `anomaly_score` | DOUBLE | 이상 점수 (0~1) |
+| `anomaly_reason` | TEXT | bot / boosting / normal |
+| `is_injected` | SMALLINT | 평가용 정답 라벨 |
+| `updated_at` | TIMESTAMPTZ | 갱신 시각 |
+
+고유 키 = `player_tag`. 정제 이벤트의 중복 판단 기준 = `event_id`(= battleTime+player_tag).
+
+### 저장 포맷과 이유
+
+| 저장소 | 포맷 | 이유 |
+|---|---|---|
+| PostgreSQL | 테이블 | 탐지 **결과를 빠르게 조회**(대시보드·API). SQL·인덱스·집계 |
+| Parquet | 컬럼 기반 파일 | **정제 원본 보관 + 재처리**. 압축·분석 최적화. 날짜(`dt=`) 파티셔닝 |
+
+재실행하면 Kafka 전체를 다시 읽어 결과를 **덮어씀(overwrite)** → 멱등(같은 입력이면 같은 결과).
+
+### 실행 (Spark 컨테이너 안에서 — 로컬 Java/pyspark 불필요)
+
+```bash
+docker compose up -d kafka postgres spark
+bash create_topics.sh
+PYTHONUTF8=1 python producer.py --in data/raw --rate 10     # Kafka에 데이터 채우기
+docker compose exec spark spark-submit --master "local[*]" \
+  --packages org.apache.spark:spark-sql-kafka-0-10_2.12:3.5.1,org.postgresql:postgresql:42.7.3 \
+  /app/preprocess.py
+```
+
+> Spark가 **Kafka 컨테이너에 접속하려면** 내부 리스너가 필요해서 docker-compose의 Kafka에 `kafka:29092`(컨테이너용) + `localhost:9092`(호스트용) **2개 리스너**를 설정함. (3회차 자료의 listener 이슈 대응)
