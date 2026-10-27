@@ -291,9 +291,10 @@ player_tag   | battles | win_rate | brawler_variety | anomaly_score | anomaly_re
 docker compose up -d kafka postgres spark
 bash create_topics.sh
 PYTHONUTF8=1 python producer.py --in data/raw --rate 10     # Kafka에 데이터 채우기
-docker compose exec spark spark-submit --master "local[*]" \
-  --packages org.apache.spark:spark-sql-kafka-0-10_2.12:3.5.1,org.postgresql:postgresql:42.7.3 \
+docker compose exec spark /opt/spark/bin/spark-submit --master "local[*]" \
+  --packages org.apache.spark:spark-sql-kafka-0-10_2.12:3.5.3,org.postgresql:postgresql:42.7.3 \
   /app/preprocess.py
 ```
 
 > Spark가 **Kafka 컨테이너에 접속하려면** 내부 리스너가 필요해서 docker-compose의 Kafka에 `kafka:29092`(컨테이너용) + `localhost:9092`(호스트용) **2개 리스너**를 설정함. (3회차 자료의 listener 이슈 대응)
+> Spark 이미지는 공식 `apache/spark:3.5.3` (bitnami/spark는 Docker Hub에서 내려감).

@@ -41,23 +41,20 @@ services:
       - pgdata:/var/lib/postgresql/data
 
   # ---------- Spark (preprocess.py 실행 — Kafka에서 읽어 전처리·저장) ----------
+  # bitnami/spark는 2025년 Docker Hub에서 내려가서 공식 apache/spark 이미지 사용.
   spark:
-    image: bitnami/spark:3.5.1
+    image: apache/spark:3.5.3
     container_name: spark
     depends_on:
       - kafka
       - postgres
-    environment:
-      SPARK_MODE: master
-    ports:
-      - "8080:8080"   # Spark master UI
-      - "7077:7077"
     volumes:
       - .:/app        # 프로젝트를 /app으로 마운트 (preprocess.py 실행, data/parquet 저장)
     working_dir: /app
+    command: ["tail", "-f", "/dev/null"]   # 컨테이너를 켜둔 채 유지 → exec로 spark-submit 실행
     # 실행 (Java/pyspark 로컬 설치 불필요 — 컨테이너 안에서 실행):
-    #   docker compose exec spark spark-submit --master "local[*]" \
-    #     --packages org.apache.spark:spark-sql-kafka-0-10_2.12:3.5.1,org.postgresql:postgresql:42.7.3 \
+    #   docker compose exec spark /opt/spark/bin/spark-submit --master "local[*]" \
+    #     --packages org.apache.spark:spark-sql-kafka-0-10_2.12:3.5.3,org.postgresql:postgresql:42.7.3 \
     #     /app/preprocess.py
 
   # ---------- Airflow (standalone. 운영 설계는 5회차에) ----------
