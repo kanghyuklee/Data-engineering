@@ -302,3 +302,18 @@ docker compose exec spark /opt/spark/bin/spark-submit --master "local[*]" \
 
 > Spark가 **Kafka 컨테이너에 접속하려면** 내부 리스너가 필요해서 docker-compose의 Kafka에 `kafka:29092`(컨테이너용) + `localhost:9092`(호스트용) **2개 리스너**를 설정함. (3회차 자료의 listener 이슈 대응)
 > Spark 이미지는 공식 `apache/spark:3.5.3` (bitnami/spark는 Docker Hub에서 내려감).
+
+### 입력 · 출력 위치
+
+| 구분 | 위치 |
+|---|---|
+| 입력 | Kafka 토픽 `bs.battles` |
+| 출력(결과) | PostgreSQL `brawlstars` DB의 `detection_result` 테이블 |
+| 출력(정제 원본) | Parquet `data/parquet/battles/` (날짜 `dt=` 파티셔닝) |
+
+### 남은 문제 (한계 · 다음 개선)
+
+- **승부조작 탐지 미구현** — `opponents` 배열을 explode 해서 (player, opponent) 쌍 반복 횟수를 세야 함. 현재는 봇·부스팅만.
+- **룰 임계값이 소량 데이터 기준** — 실데이터 5명뿐이라, 더 수집해 precision/recall로 임계값 튜닝 필요.
+- **저장이 전체 overwrite(스냅샷)** — 증분/누적이 아님. 데이터 커지면 upsert 또는 기간별 재처리 설계 필요.
+- **쇼다운(솔로) 모드 미처리** — `teams`가 없는 모드는 현재 payload 변환에서 제외됨(`players` 키 분기 TODO).
