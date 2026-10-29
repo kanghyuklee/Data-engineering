@@ -328,6 +328,7 @@ PYTHONUTF8=1 python dirty_injector.py        # 유형별 2건 = 8건 주입
 | Parquet | 컬럼 기반 파일 | **정제 원본 보관 + 재처리**. 압축·분석 최적화. 날짜(`dt=`) 파티셔닝 |
 
 재실행하면 Kafka 전체를 다시 읽어 결과를 **덮어씀(overwrite)** → 멱등(같은 입력이면 같은 결과).
+PostgreSQL 저장은 `option("truncate","true")`를 줘서 **테이블을 DROP·재생성하지 않고 TRUNCATE+INSERT** 한다 → schema.sql의 **PK·인덱스가 유지**됨. (피드백 반영)
 
 ### 실행 (Spark 컨테이너 안에서 — 로컬 Java/pyspark 불필요)
 

@@ -109,7 +109,10 @@ def main():
                 "is_injected", "updated_at"))
 
     # ── 5) PostgreSQL 저장 (결과 스냅샷, overwrite = 재실행해도 멱등) ──
-    (scored.write.mode("overwrite").jdbc(PG_URL, "detection_result", properties=PG_PROPS))
+    #   truncate=true: 테이블을 DROP·재생성하지 않고 TRUNCATE + INSERT 한다.
+    #   → schema.sql의 PK·인덱스가 유지된다 (truncate 없으면 Spark가 테이블을 재생성해 사라짐). 피드백 반영.
+    (scored.write.mode("overwrite").option("truncate", "true")
+        .jdbc(PG_URL, "detection_result", properties=PG_PROPS))
 
     # ── 입출력 예시 출력 ──────────────────────────────────────────
     print(f"[입력] Kafka 메시지 {total_in}건  →  [정제] {clean_cnt}건 (중복·결측 제거 후)")
