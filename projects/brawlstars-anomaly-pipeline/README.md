@@ -346,6 +346,15 @@ docker compose exec kafka /opt/kafka/bin/kafka-console-consumer.sh \
 
 고유 키 = `player_tag`. 정제 이벤트의 중복 판단 기준 = `event_id`(= battleTime+player_tag).
 
+**인덱스** (2개):
+
+| 인덱스 | 컬럼 | 왜 |
+|---|---|---|
+| PK (자동) | `player_tag` | 계정 조회 + **계정당 1행 보장**(멱등 기준) |
+| `idx_detection_score` | `anomaly_score DESC` | **"의심 상위 N개" 조회**(`ORDER BY anomaly_score DESC`) 가속 — preprocess 출력·Grafana 대시보드의 핵심 쿼리 |
+
+> `anomaly_reason`(bot/boosting/normal 3종)은 **카디널리티가 낮아** 인덱스를 걸지 않음. 이 인덱스들은 `truncate=true` 저장 덕에 매 실행 유지된다(아래 '발표 피드백 반영' 참고).
+
 ### 저장 포맷과 이유
 
 | 저장소 | 포맷 | 이유 |
