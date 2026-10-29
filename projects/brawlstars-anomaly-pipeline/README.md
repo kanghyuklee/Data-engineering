@@ -380,6 +380,17 @@ docker compose exec spark /opt/spark/bin/spark-submit --master "local[*]" \
 | 출력(결과) | PostgreSQL `brawlstars` DB의 `detection_result` 테이블 |
 | 출력(정제 원본) | Parquet `data/parquet/battles/` (날짜 `dt=` 파티셔닝) |
 
+### 발표 피드백 반영 (4회차, 2026-10-29)
+
+발표·피드백에서 받은 지적과 **왜 그렇게 고쳤는지** 기록.
+
+| 피드백 (지적) | 왜 문제였나 | 어떻게 반영 |
+|---|---|---|
+| **overwrite가 테이블을 날린다** | Spark `mode("overwrite")`는 테이블을 **DROP 후 재생성** → `schema.sql`의 **PK·인덱스가 매 실행마다 사라짐**(문서와 실제 불일치). Grafana 조회·업서트 기준이 깨짐 | `option("truncate","true")` 추가 → **TRUNCATE+INSERT**로 테이블 정의 **보존**. (단, 출력 컬럼 바뀌면 테이블 수동 ALTER 필요) |
+| **불량 데이터가 그냥 사라진다** | 불량(깨진 JSON·결측·이상 시각)을 `dropna`로 **조용히 버리면** 무엇이 왜 빠졌는지 알 수 없음 → **유실·관측성 문제** | **DLQ 라우팅** 추가 → 유효/불량을 나눠, 불량은 **원본+사유로 `bs.dlq`에 격리**. 나중에 원인 분석·재처리 가능 |
+
+> 두 변경 모두 "**유실 없이, 추적 가능하게**"라는 A주제(안정적 파이프라인) 방향과 일치. 상세는 위 **저장 포맷**·**불량 격리(DLQ)** 절 참고.
+
 ### 남은 문제 (한계 · 다음 개선)
 
 - **승부조작 탐지 미구현** — `opponents` 배열을 explode 해서 (player, opponent) 쌍 반복 횟수를 세야 함. 현재는 봇·부스팅만.
