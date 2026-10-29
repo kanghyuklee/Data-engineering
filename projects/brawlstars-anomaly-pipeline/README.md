@@ -231,9 +231,9 @@ python producer.py --in data/raw --rate 300   # 전송 (초당 300건)
 ### 처리 흐름
 
 ```
-Kafka(bs.battles) ──배치 읽기──▶ 전처리 ──▶ Parquet(정제 원본)
-                                    │
-                                    └─집계·이상 스코어─▶ PostgreSQL(탐지 결과)
+Kafka(bs.battles) ──배치 읽기──┬─ 유효 ─▶ 전처리 ──▶ Parquet(정제 원본)
+                               │                 └─집계·이상 스코어─▶ PostgreSQL(탐지 결과)
+                               └─ 불량 ─▶ Kafka(bs.dlq)   ← 버리지 않고 격리
 ```
 
 입력은 **Kafka(`bs.battles`)에서 읽는다** — 파일을 직접 읽으면 Kafka를 쓰는 의미가 없으므로, 수집 구간이 넣어둔 Kafka 데이터를 Spark가 소비한다. (Spark의 `read.format("kafka")`로 `earliest~latest` 전체를 **배치**로 읽음)
@@ -243,7 +243,7 @@ Kafka(bs.battles) ──배치 읽기──▶ 전처리 ──▶ Parquet(정�
 | 항목 | 처리 | 코드 |
 |---|---|---|
 | 자료형 | `event_time` 문자열 → timestamp(UTC, **발생 시각**) | `to_timestamp` |
-| 결측 | 필수 필드(`event_id`·`player_tag`·`event_time`) 없으면 제거 | `dropna` |
+| 결측 | 필수 필드(`event_id`·`player_tag`·`event_time`) 없으면 **불량 분리 → `bs.dlq` 격리** | `filter(~valid)` |
 | 중복 | **`event_id` 기준** 중복 제거 (재실행 중복 흡수) | `dropDuplicates(["event_id"])` |
 | 집계 | 계정별 승률·트로피 증감·브롤러 다양성 | `groupBy("player_tag")` |
 
@@ -303,6 +303,32 @@ PYTHONUTF8=1 python dirty_injector.py        # 유형별 2건 = 8건 주입
 - **의미**: producer를 실수로 재실행하거나 파이프라인이 죽었다 재시작해 같은 데이터를 또 읽어도 결과가 안 꼬인다. "유실 없고 중복 없는" 안정적 파이프라인의 증거(A주제 핵심).
 
 (주입한 메시지는 토픽에 남으므로, 초기화하려면 `bs.battles` 토픽을 재생성한다.)
+
+### 불량 격리 (DLQ) — 버리지 말고 `bs.dlq`로
+
+불량 레코드를 `dropna`로 **조용히 버리면** "무엇이 왜 빠졌는지" 알 수 없다(유실·관측성 문제).
+그래서 전처리에서 **유효/불량을 나눠**, 불량은 **원본 그대로 `bs.dlq`로 보낸다.**
+
+| 불량 유형 | 격리 사유(`reason`) |
+|---|---|
+| 깨진 JSON (파싱 실패) | `parse_fail_or_missing_event_id` |
+| `player_tag` 결측 | `missing_player_tag` |
+| `event_time` 이상 | `bad_event_time` |
+
+DLQ 메시지는 **원본(`original`) + 사유(`reason`) + 격리시각(`dlq_time`)** 을 담는다.
+
+실제 실행 — dirty_injector로 8건 주입 후:
+```
+[입력] Kafka 메시지 133건  →  [정제] 126건  ·  [DLQ 격리] 6건 (불량은 bs.dlq로)
+```
+```bash
+# bs.dlq 확인
+docker compose exec kafka /opt/kafka/bin/kafka-console-consumer.sh \
+  --bootstrap-server localhost:9092 --topic bs.dlq --from-beginning
+# → {"original":"{\"event_id\":\"broken\"...","reason":"parse_fail_or_missing_event_id",...}
+```
+→ 깨진 데이터도 **유실 없이 격리**되므로, 나중에 원인을 보고 재처리할 수 있다.
+(참고: DLQ 전송은 append라 preprocess를 재실행하면 같은 불량이 또 쌓인다 — 조회·원인분석용이므로 허용.)
 
 ### 최종 스키마 — `detection_result` (PostgreSQL)
 
