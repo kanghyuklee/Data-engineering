@@ -406,3 +406,43 @@ docker compose exec spark /opt/spark/bin/spark-submit --master "local[*]" \
 - **룰 임계값이 소량 데이터 기준** — 실데이터 5명뿐이라, 더 수집해 precision/recall로 임계값 튜닝 필요.
 - **저장이 전체 overwrite(스냅샷)** — 증분/누적이 아님. 데이터 커지면 upsert 또는 기간별 재처리 설계 필요.
 - **쇼다운(솔로) 모드 미처리** — `teams`가 없는 모드는 현재 payload 변환에서 제외됨(`players` 키 분기 TODO).
+
+## 9. 운영 — Airflow DAG (5회차) — `dag.py`
+
+수동으로 하던 `producer.py` → `spark-submit preprocess.py` 순서를 **Airflow가 매일 자동**으로 묶는다.
+(Jenkins처럼 전체 과정을 자동 실행하되, Airflow는 **날짜·멱등·backfill**이 더해진 **데이터 파이프라인** 전용 오케스트레이터)
+
+### DAG 구조
+```
+fetch_battlelogs → produce_to_kafka → spark_preprocess → quality_check
+   (API 수집)        (리플레이 전송)      (전처리+저장+DLQ)    (결과 검증)
+         └──────────── 실패 시 Discord 알림 (on_failure_callback) ───────────┘
+```
+
+| Task | 하는 일 | 스크립트 |
+|---|---|---|
+| `fetch_battlelogs` | Supercell API 수집 → `data/raw` | `fetch_battlelogs.py` |
+| `produce_to_kafka` | 리플레이로 Kafka 전송 | `producer.py` |
+| `spark_preprocess` | 전처리+집계+Parquet+PG+DLQ | `spark-submit preprocess.py` |
+| `quality_check` | 건수·null·전수의심 점검 (실패 시 알림) | DAG 내 Python |
+
+### ① retry·backoff 전략 — 어느 걸 재시도, 어느 걸 알림
+| Task | retry | 이유 |
+|---|---|---|
+| fetch / produce / preprocess | **O** (지수 백오프 1→2→4분) | API 429·Kafka 끊김·DB 일시오류 = **일시적 인프라 문제** → 재시도. 모두 멱등이라 안전 |
+| quality_check | **X** (`retries=0`) | **데이터가 틀린 것**은 재시도해도 똑같음 → **바로 Discord 알림** |
+
+### ② 스케줄 · 날짜
+- `schedule="@daily"`, `catchup=False`
+- **리플레이 날짜 매핑**: 데이터 날짜 = 배틀 발생 시각(`event_time`), 실행 날짜 = DAG `logical_date`.
+  과거 배틀을 리플레이하므로 **둘은 분리**(특정 날짜 재처리는 `target_date` 파라미터로).
+
+### ③ 멱등성 (보너스)
+`preprocess`가 **overwrite(truncate) + event_id 중복제거**라, **같은 날 두 번 실행해도 `detection_result` 결과 동일**.
+→ "같은 날짜 2회 실행 → 결과 같음" 보너스를 그대로 만족. (DLQ만 append라 중복 — 조회용이므로 허용)
+
+### 실행 요건
+Airflow가 프로젝트 스크립트·Kafka·Spark에 접근해야 함:
+- 프로젝트 마운트(`./:/opt/project`, `PROJECT_DIR`) + deps(`kafka-python`·`lz4`·`requests`)
+- `spark_preprocess`는 Spark 접근 필요 → 운영에선 **`SparkSubmitOperator`** 권장(또는 호스트 standalone 실행)
+- `DISCORD_WEBHOOK` 환경변수 설정 시 실패 알림 전송
