@@ -385,6 +385,12 @@ docker compose exec kafka /opt/kafka/bin/kafka-console-consumer.sh \
 재실행하면 Kafka 전체를 다시 읽어 결과를 **덮어씀(overwrite)** → 멱등(같은 입력이면 같은 결과).
 PostgreSQL 저장은 `option("truncate","true")`를 줘서 **테이블을 DROP·재생성하지 않고 TRUNCATE+INSERT** 한다 → schema.sql의 **PK·인덱스가 유지**됨.
 
+> **실제 겪은 함정 — truncate=true만으론 부족, 테이블이 schema.sql産이어야 함**
+> - 증상: 저장은 되는데 `\d detection_result` 에 PK·인덱스가 없음(`pg_indexes` 0 rows). 타입도 `bigint`·`timestamp without time zone` 등 **Spark 추론형**.
+> - 진단: 과거 어느 실행에서 Spark가 **`truncate` 없는 overwrite**로 schema.sql 테이블을 DROP·재생성해 PK 없는 테이블로 바꿔놨고, `pgdata` **볼륨이 유지**돼서 schema.sql(init 스크립트, 빈 볼륨 최초 1회만 실행)이 다시 안 돎. `truncate=true`는 *기존 구조를 보존*할 뿐이라 **PK 없는 테이블을 그대로 보존**하고 있었음.
+> - 조치: `DROP TABLE detection_result` → `psql -f /docker-entrypoint-initdb.d/schema.sql`로 **PK+인덱스 포함 재생성** → Spark 재실행. 이후 `\d`에 `detection_result_pkey`·`idx_detection_score` 정상 표시.
+> - 교훈: 인덱스를 유지하려면 ①테이블은 **schema.sql로 생성**하고 ②Spark는 **항상 truncate=true**여야 둘이 맞물린다. (운영에선 `AUTO_CREATE`/plain overwrite가 스키마를 덮지 않게 주의)
+
 ### 실행 (Spark 컨테이너 안에서 — 로컬 Java/pyspark 불필요)
 
 ```bash
