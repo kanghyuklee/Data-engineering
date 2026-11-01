@@ -456,3 +456,73 @@ Airflow가 프로젝트 스크립트·Kafka·Spark에 접근해야 함:
 - 프로젝트 마운트(`./:/opt/project`, `PROJECT_DIR`) + deps(`kafka-python`·`lz4`·`requests`)
 - `spark_preprocess`는 Spark 접근 필요 → 운영에선 **`SparkSubmitOperator`** 권장(또는 호스트 standalone 실행)
 - `DISCORD_WEBHOOK` 환경변수 설정 시 실패 알림 전송
+
+## 10. 실행 흐름 (end-to-end 런북)
+
+수집 → Kafka → 전송 → Spark → Airflow 를 **처음부터 끝까지** 돌리는 순서. 실제로 돌리며 겪은 포인트까지 포함.
+
+### 플랫폼 주의 (Windows)
+- **Git Bash**: 환경변수는 `PYTHONUTF8=1 python ...`, 컨테이너에 `/opt/...` 경로 넘길 땐 **`MSYS_NO_PATHCONV=1`** 필요(경로 자동변환 방지).
+- **PowerShell**: `MSYS_NO_PATHCONV`는 **불필요**(쓰면 "용어가 인식되지 않습니다" 에러). 환경변수는 `$env:PYTHONUTF8=1; python ...`. bash 스크립트(`create_topics.sh`)는 안 도니 명령을 직접 실행.
+- 어느 쪽이든 **프로젝트 폴더에서** 실행.
+
+### 0) 사전
+- Docker Desktop 실행 (`docker ps` 가 에러 없이 나오면 OK).
+- `.env` 에 `BRAWLSTARS_API_TOKEN` (토큰은 **발급 IP에서만** 동작 → 바뀌면 403).
+
+### 1) 수집 — `fetch_battlelogs.py`
+```bash
+# 토큰 1명 테스트 (403이면 IP로 키 재발급)
+PYTHONUTF8=1 python fetch_battlelogs.py --tag "#29C8PULJ9"
+# 대량 수집 (신규 N명, 계정당 25전). 중간에 죽어도 재실행하면 이어받음
+PYTHONUTF8=1 python fetch_battlelogs.py --country global --seeds 200 --max-players 2000 --rps 5 --out data/raw
+```
+- `seeds`=시작점(랭킹 상위), `max-players`=이번 실행 신규 저장 수. **총 건수 ≈ 계정수 × 25**.
+- 네트워크 타임아웃은 backoff 재시도 → 끝내 실패 시 그 태그만 skip(크롤 유지). → §6 "수집기 내구성 보강".
+
+### 2) Kafka 기동 + 토픽
+```bash
+# Git Bash
+MSYS_NO_PATHCONV=1 docker compose up -d kafka
+bash create_topics.sh                 # bs.battles(3파티션·7일), bs.dlq(14일)
+```
+```powershell
+# PowerShell (스크립트 대신 직접)
+docker compose up -d kafka
+docker compose exec kafka /opt/kafka/bin/kafka-topics.sh --bootstrap-server localhost:9092 --create --if-not-exists --topic bs.battles --partitions 3 --replication-factor 1 --config retention.ms=604800000
+docker compose exec kafka /opt/kafka/bin/kafka-topics.sh --bootstrap-server localhost:9092 --create --if-not-exists --topic bs.dlq --partitions 1 --replication-factor 1 --config retention.ms=1209600000
+```
+- `bs.battles`에 뜨는 `WARNING: ... period('.') or underscore('_')`는 **무해**(메트릭명 경고). 토픽은 정상 생성.
+- `--describe`로 `PartitionCount: 3`·`retention.ms=604800000` 확인.
+
+### 3) 전송 — `producer.py`
+```bash
+# (선택) 깨끗한 카운트: 이전 메시지가 남아있으면 토픽 리셋 후 재생성
+#   Kafka는 볼륨 없음 → 컨테이너 restart는 데이터 유지, recreate면 초기화.
+docker compose exec kafka /opt/kafka/bin/kafka-topics.sh --bootstrap-server localhost:9092 --delete --topic bs.battles
+# (위 생성 명령으로 재생성)
+
+PYTHONUTF8=1 python producer.py --in data/raw --rate 2000   # PowerShell은 $env:PYTHONUTF8=1;
+```
+- 공통 껍데기로 감싸 전송, `acks=all`+`enable_idempotence`+`lz4`, **key=player_tag**(계정별 순서).
+- `--rate`로 초당 전송량 조절 = **로드 테스트 레버**(`--rate 0`=최대 속도).
+- 현재 오프셋 확인: `kafka-get-offsets.sh --bootstrap-server localhost:9092 --topic bs.battles` (파티션별 합 = 적재 건수).
+
+### 4) Spark 전처리·저장 — `preprocess.py`
+```bash
+docker compose up -d postgres spark
+MSYS_NO_PATHCONV=1 docker compose exec spark /opt/spark/bin/spark-submit --master "local[*]" \
+  --packages org.apache.spark:spark-sql-kafka-0-10_2.12:3.5.3,org.postgresql:postgresql:42.7.3 \
+  --conf spark.jars.ivy=/tmp/.ivy2 \
+  /app/preprocess.py
+```
+- Kafka 배치 읽기 → 파싱·결측·중복 제거 → 불량은 **`bs.dlq`로 격리** → Parquet(원본)+PostgreSQL(`detection_result`, truncate=true로 PK·인덱스 유지).
+- 출력 로그: `[입력] N건 → [정제] M건 · [DLQ 격리] K건`.
+
+### 5) 운영 — Airflow DAG
+```bash
+docker compose up -d airflow
+# 웹 UI: http://localhost:8081  → DAG 'brawlstars_anomaly_batch' 켜고 Trigger
+```
+- 1~4를 Task로 묶어 순차 실행: `fetch → produce → preprocess → quality_check`.
+- fetch/produce/preprocess는 지수 백오프 재시도, `quality_check` 실패는 재시도 없이 Discord 알림.
