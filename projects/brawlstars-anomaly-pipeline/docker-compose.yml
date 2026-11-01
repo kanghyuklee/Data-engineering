@@ -57,7 +57,7 @@ services:
     #     --packages org.apache.spark:spark-sql-kafka-0-10_2.12:3.5.3,org.postgresql:postgresql:42.7.3 \
     #     /app/preprocess.py
 
-  # ---------- Airflow (standalone. 운영 설계는 5회차에) ----------
+  # ---------- Airflow (standalone) ----------
   airflow:
     image: apache/airflow:2.9.2
     container_name: airflow

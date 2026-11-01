@@ -1,5 +1,5 @@
 """
-preprocess.py — 4회차: Spark 전처리 · 저장
+preprocess.py — Spark 전처리 · 저장
 ----------------------------------------
 입력: Kafka 토픽 bs.battles (수집 구간이 넣어둔 이벤트)   ← Kafka를 실제 소스로 사용
 변환: 전처리(자료형·시각·결측·중복) → 계정별 집계 → 이상 스코어
@@ -134,7 +134,7 @@ def main():
 
     # ── 5) PostgreSQL 저장 (결과 스냅샷, overwrite = 재실행해도 멱등) ──
     #   truncate=true: 테이블을 DROP·재생성하지 않고 TRUNCATE + INSERT 한다.
-    #   → schema.sql의 PK·인덱스가 유지된다 (truncate 없으면 Spark가 테이블을 재생성해 사라짐). 피드백 반영.
+    #   → schema.sql의 PK·인덱스가 유지된다 (truncate 없으면 Spark가 테이블을 재생성해 사라짐).
     (scored.write.mode("overwrite").option("truncate", "true")
         .jdbc(PG_URL, "detection_result", properties=PG_PROPS))
 

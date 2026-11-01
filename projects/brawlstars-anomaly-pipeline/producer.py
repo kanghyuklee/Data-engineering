@@ -2,7 +2,7 @@
 producer.py
 ------------------
 저장된 배틀로그 JSON들을 읽어서 '한 배틀 = 한 이벤트'로 만들어 Kafka로 재생한다.
-battleTime 순서로 정렬해 내보내고, --rate로 초당 전송 건수를 조절한다. (6회차 로드 테스트 핵심)
+battleTime 순서로 정렬해 내보내고, --rate로 초당 전송 건수를 조절한다. (로드 테스트 대비)
 
 Producer 흐름:  읽기 → 공통 껍데기로 감싸 직렬화 → 전송 → 콜백으로 성공/실패 확인
 
@@ -39,7 +39,7 @@ def make_producer(bootstrap: str) -> KafkaProducer:
         enable_idempotence=True,    # 재시도해도 중복 저장 안 됨 (정확히 한 번에 근접)
         compression_type="lz4",     # 네트워크·디스크 절약, 처리량↑
         retries=5,
-        linger_ms=10,               # 모아서 전송 (6회차에 batch_size와 함께 튜닝)
+        linger_ms=10,               # 모아서 전송 (batch_size와 함께 튜닝 여지)
     )
 
 
@@ -68,7 +68,7 @@ def to_payload(owner_tag: str, b: dict) -> dict | None:
     event = b.get("event", {})
     teams = battle.get("teams") or []
 
-    # 팀원/상대 분리 (피드백 반영):
+    # 팀원/상대 분리:
     #   teams는 팀 2개(리스트의 리스트). 내가 속한 팀 → teammates, 나머지 팀 → opponents.
     #   기존엔 "나 빼고 전부"라 팀원이 상대에 섞였음 → 승부조작 탐지가 부정확했음.
     # TODO: 쇼다운(players 키, 팀 없는 솔로 모드) 분기
@@ -162,7 +162,7 @@ def main():
     p.add_argument("--in", dest="in_dir", default="data/raw")
     p.add_argument("--bootstrap", default="localhost:9092")
     p.add_argument("--rate", type=float, default=300,
-                   help="초당 전송 건수 (0이면 최대 속도). 6회차 로드 테스트에서 올림")
+                   help="초당 전송 건수 (0이면 최대 속도). 로드 테스트에서 올림")
     args = p.parse_args()
     run(args.in_dir, args.bootstrap, args.rate)
 

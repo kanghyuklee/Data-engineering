@@ -24,7 +24,7 @@
 
 수집 방식 — 랭킹에서 시작 태그 확보 → 각 태그 배틀로그 수집 → 배틀에 나온 상대 태그로 확장(크롤).
 
-API에 rate limit 있음. 실시간으로 계속 당기면 6회차 부하 테스트 불가. 
+API에 rate limit 있음. 실시간으로 계속 당기면 부하 테스트 불가. 
 따라서 배틀로그를 한 번 모아 JSON으로 저장 → 리플레이 생성기가 battleTime 순서로 배속 재생해 Kafka로 전송. 실데이터를 쓰되 속도는 직접 조절함.
 
 ### 이벤트 단위·스키마
@@ -115,7 +115,7 @@ API에 rate limit 있음. 실시간으로 계속 당기면 6회차 부하 테스
 - 트레이드오프 — 저장 로직 두 벌 관리. 결과·원본 간 일관성 신경 써야 함.
 
 ### 모니터링 (Grafana)
-- 맥락 — 부하 시 처리량·consumer lag·에러율·탐지 지연을 한눈에 보고, 기준 초과 시 알림 필요(6회차 로드 테스트 핵심 지표).
+- 맥락 — 부하 시 처리량·consumer lag·에러율·탐지 지연을 한눈에 보고, 기준 초과 시 알림 필요(로드 테스트 핵심 지표).
 - 결정 — Grafana 대시보드 + 알림. 데이터 소스는 PostgreSQL(탐지·집계 지표) + Prometheus(Kafka/Spark 시스템 지표).
 - 대안 — 로그만 보기, 또는 Streamlit에 모니터링까지 몰기.
 - 트레이드오프 — 모니터링 컴포넌트가 하나 늘어남. 다만 시스템 관측은 Grafana가 표준이라, 결과 조회(Streamlit)와 시스템 모니터링(Grafana)을 분리하는 게 깔끔함.
@@ -169,14 +169,14 @@ key = "#ABC"                       // player_tag → 같은 계정 순서 보장
 }
 ```
 
-> **피드백 반영 — 팀원/상대 분리**: 기존엔 `opponents`를 "나를 뺀 전원"으로 잡아서 **팀원이 상대에 섞였음**. 배틀 데이터의 `teams`(팀 2개 리스트)에서 **내가 속한 팀 → `teammates`, 나머지 팀 → `opponents`**로 분리하도록 수정함. 이렇게 해야 **승부조작**(상대 반복)과 **팀 어뷰징/듀오 부스팅**(팀원 반복)을 각각 정확히 탐지할 수 있음.
+> **팀원/상대 분리**: 기존엔 `opponents`를 "나를 뺀 전원"으로 잡아서 **팀원이 상대에 섞였음**. 배틀 데이터의 `teams`(팀 2개 리스트)에서 **내가 속한 팀 → `teammates`, 나머지 팀 → `opponents`**로 분리하도록 수정함. 이렇게 해야 **승부조작**(상대 반복)과 **팀 어뷰징/듀오 부스팅**(팀원 반복)을 각각 정확히 탐지할 수 있음.
 
 ### Topic 구성
 
 | 항목 | 값 | 이유 |
 |---|---|---|
 | 토픽명 | `bs.battles` | 배틀 이벤트 전용 (실패 메시지는 `bs.dlq`로 분리) |
-| 파티션 | 3 | 병렬 처리 상한. 로컬 3개로 시작 → 6회차에 늘려가며 처리량 측정 |
+| 파티션 | 3 | 병렬 처리 상한. 로컬 3개로 시작 → 늘려가며 처리량 측정 |
 | key | `player_tag` | 같은 계정 이벤트의 순서 보장 (승률·연승 계산에 필요) |
 | 리텐션 | 7일 | 재처리 가능 기간. 앞의 용량 계산과 함께 결정 |
 
@@ -226,7 +226,7 @@ python producer.py --in data/raw --rate 300   # 전송 (초당 300건)
 ### 커밋 순서 원칙
 `처리 → 저장 → (진행위치) commit` 순서. commit을 **먼저** 하면 저장 실패 시 **유실**, **나중에** 하면 중복(멱등으로 해결). 그래서 **commit은 항상 마지막 + 멱등 저장**. (consumer는 `enable_auto_commit=False`)
 
-## 8. 전처리와 저장 (4회차) — `preprocess.py`
+## 8. 전처리와 저장 — `preprocess.py`
 
 ### 처리 흐름
 
@@ -238,7 +238,7 @@ Kafka(bs.battles) ──배치 읽기──┬─ 유효 ─▶ 전처리 ──
 
 입력은 **Kafka(`bs.battles`)에서 읽는다** — 파일을 직접 읽으면 Kafka를 쓰는 의미가 없으므로, 수집 구간이 넣어둔 Kafka 데이터를 Spark가 소비한다. (Spark의 `read.format("kafka")`로 `earliest~latest` 전체를 **배치**로 읽음)
 
-### 전처리 단계 (자료 기준)
+### 전처리 단계
 
 | 항목 | 처리 | 코드 |
 |---|---|---|
@@ -300,7 +300,7 @@ PYTHONUTF8=1 python dirty_injector.py        # 유형별 2건 = 8건 주입
 
 - `DUP_DEMO`는 **event_id가 고정**이라 몇 번을 넣어도 `dropDuplicates`가 1건으로 합침 → `#DIRTYTEST` 는 계속 `battles=1`.
 - 깨진·결측·이상은 매번 걸러짐.
-- **의미**: producer를 실수로 재실행하거나 파이프라인이 죽었다 재시작해 같은 데이터를 또 읽어도 결과가 안 꼬인다. "유실 없고 중복 없는" 안정적 파이프라인의 증거(A주제 핵심).
+- **의미**: producer를 실수로 재실행하거나 파이프라인이 죽었다 재시작해 같은 데이터를 또 읽어도 결과가 안 꼬인다. "유실 없고 중복 없는" 안정적 파이프라인의 증거.
 
 (주입한 메시지는 토픽에 남으므로, 초기화하려면 `bs.battles` 토픽을 재생성한다.)
 
@@ -353,7 +353,7 @@ docker compose exec kafka /opt/kafka/bin/kafka-console-consumer.sh \
 | PK (자동) | `player_tag` | 계정 조회 + **계정당 1행 보장**(멱등 기준) |
 | `idx_detection_score` | `anomaly_score DESC` | **"의심 상위 N개" 조회**(`ORDER BY anomaly_score DESC`) 가속 — preprocess 출력·Grafana 대시보드의 핵심 쿼리 |
 
-> `anomaly_reason`(bot/boosting/normal 3종)은 **카디널리티가 낮아** 인덱스를 걸지 않음. 이 인덱스들은 `truncate=true` 저장 덕에 매 실행 유지된다(아래 '발표 피드백 반영' 참고).
+> `anomaly_reason`(bot/boosting/normal 3종)은 **카디널리티가 낮아** 인덱스를 걸지 않음. 이 인덱스들은 `truncate=true` 저장 덕에 매 실행 유지된다(아래 '설계 개선 내역' 참고).
 
 ### 저장 포맷과 이유
 
@@ -363,7 +363,7 @@ docker compose exec kafka /opt/kafka/bin/kafka-console-consumer.sh \
 | Parquet | 컬럼 기반 파일 | **정제 원본 보관 + 재처리**. 압축·분석 최적화. 날짜(`dt=`) 파티셔닝 |
 
 재실행하면 Kafka 전체를 다시 읽어 결과를 **덮어씀(overwrite)** → 멱등(같은 입력이면 같은 결과).
-PostgreSQL 저장은 `option("truncate","true")`를 줘서 **테이블을 DROP·재생성하지 않고 TRUNCATE+INSERT** 한다 → schema.sql의 **PK·인덱스가 유지**됨. (피드백 반영)
+PostgreSQL 저장은 `option("truncate","true")`를 줘서 **테이블을 DROP·재생성하지 않고 TRUNCATE+INSERT** 한다 → schema.sql의 **PK·인덱스가 유지**됨.
 
 ### 실행 (Spark 컨테이너 안에서 — 로컬 Java/pyspark 불필요)
 
@@ -378,7 +378,7 @@ docker compose exec spark /opt/spark/bin/spark-submit --master "local[*]" \
 ```
 (Git Bash에서는 맨 앞에 `MSYS_NO_PATHCONV=1` 붙여 경로 변환 방지. `spark.jars.ivy=/tmp/.ivy2`는 비root 유저 Ivy 캐시 쓰기 권한 이슈 회피.)
 
-> Spark가 **Kafka 컨테이너에 접속하려면** 내부 리스너가 필요해서 docker-compose의 Kafka에 `kafka:29092`(컨테이너용) + `localhost:9092`(호스트용) **2개 리스너**를 설정함. (3회차 자료의 listener 이슈 대응)
+> Spark가 **Kafka 컨테이너에 접속하려면** 내부 리스너가 필요해서 docker-compose의 Kafka에 `kafka:29092`(컨테이너용) + `localhost:9092`(호스트용) **2개 리스너**를 설정함. (컨테이너 간 접속 이슈 대응)
 > Spark 이미지는 공식 `apache/spark:3.5.3` (bitnami/spark는 Docker Hub에서 내려감).
 
 ### 입력 · 출력 위치
@@ -389,16 +389,16 @@ docker compose exec spark /opt/spark/bin/spark-submit --master "local[*]" \
 | 출력(결과) | PostgreSQL `brawlstars` DB의 `detection_result` 테이블 |
 | 출력(정제 원본) | Parquet `data/parquet/battles/` (날짜 `dt=` 파티셔닝) |
 
-### 발표 피드백 반영 (4회차, 2026-10-29)
+### 설계 개선 내역
 
-발표·피드백에서 받은 지적과 **왜 그렇게 고쳤는지** 기록.
+개선한 지점과 **왜 그렇게 고쳤는지** 기록.
 
-| 피드백 (지적) | 왜 문제였나 | 어떻게 반영 |
+| 개선 지점 | 왜 문제였나 | 어떻게 반영 |
 |---|---|---|
 | **overwrite가 테이블을 날린다** | Spark `mode("overwrite")`는 테이블을 **DROP 후 재생성** → `schema.sql`의 **PK·인덱스가 매 실행마다 사라짐**(문서와 실제 불일치). Grafana 조회·업서트 기준이 깨짐 | `option("truncate","true")` 추가 → **TRUNCATE+INSERT**로 테이블 정의 **보존**. (단, 출력 컬럼 바뀌면 테이블 수동 ALTER 필요) |
 | **불량 데이터가 그냥 사라진다** | 불량(깨진 JSON·결측·이상 시각)을 `dropna`로 **조용히 버리면** 무엇이 왜 빠졌는지 알 수 없음 → **유실·관측성 문제** | **DLQ 라우팅** 추가 → 유효/불량을 나눠, 불량은 **원본+사유로 `bs.dlq`에 격리**. 나중에 원인 분석·재처리 가능 |
 
-> 두 변경 모두 "**유실 없이, 추적 가능하게**"라는 A주제(안정적 파이프라인) 방향과 일치. 상세는 위 **저장 포맷**·**불량 격리(DLQ)** 절 참고.
+> 두 변경 모두 "**유실 없이, 추적 가능하게**"라는 안정적 파이프라인 방향과 일치. 상세는 위 **저장 포맷**·**불량 격리(DLQ)** 절 참고.
 
 ### 남은 문제 (한계 · 다음 개선)
 
@@ -407,7 +407,7 @@ docker compose exec spark /opt/spark/bin/spark-submit --master "local[*]" \
 - **저장이 전체 overwrite(스냅샷)** — 증분/누적이 아님. 데이터 커지면 upsert 또는 기간별 재처리 설계 필요.
 - **쇼다운(솔로) 모드 미처리** — `teams`가 없는 모드는 현재 payload 변환에서 제외됨(`players` 키 분기 TODO).
 
-## 9. 운영 — Airflow DAG (5회차) — `dag.py`
+## 9. 운영 — Airflow DAG — `dag.py`
 
 수동으로 하던 `producer.py` → `spark-submit preprocess.py` 순서를 **Airflow가 매일 자동**으로 묶는다.
 (Jenkins처럼 전체 과정을 자동 실행하되, Airflow는 **날짜·멱등·backfill**이 더해진 **데이터 파이프라인** 전용 오케스트레이터)
@@ -437,9 +437,9 @@ fetch_battlelogs → produce_to_kafka → spark_preprocess → quality_check
 - **리플레이 날짜 매핑**: 데이터 날짜 = 배틀 발생 시각(`event_time`), 실행 날짜 = DAG `logical_date`.
   과거 배틀을 리플레이하므로 **둘은 분리**(특정 날짜 재처리는 `target_date` 파라미터로).
 
-### ③ 멱등성 (보너스)
+### ③ 멱등성
 `preprocess`가 **overwrite(truncate) + event_id 중복제거**라, **같은 날 두 번 실행해도 `detection_result` 결과 동일**.
-→ "같은 날짜 2회 실행 → 결과 같음" 보너스를 그대로 만족. (DLQ만 append라 중복 — 조회용이므로 허용)
+→ "같은 날짜 2회 실행 → 결과 같음"을 그대로 만족. (DLQ만 append라 중복 — 조회용이므로 허용)
 
 ### 실행 요건
 Airflow가 프로젝트 스크립트·Kafka·Spark에 접근해야 함:

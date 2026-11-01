@@ -1,5 +1,5 @@
 """
-dag.py — 5회차: Airflow DAG (수집 → 전송 → 전처리 → 품질체크)
+dag.py — Airflow DAG (수집 → 전송 → 전처리 → 품질체크)
 ================================================================
 우리 파이프라인을 매일 자동으로 돌리는 오케스트레이터.
 수동으로 하던  producer.py → spark-submit preprocess.py  순서를 Airflow가 묶는다.
@@ -9,14 +9,14 @@ dag.py — 5회차: Airflow DAG (수집 → 전송 → 전처리 → 품질체�
   (API 수집)         (리플레이 전송)      (전처리+저장+DLQ)    (결과 검증)
   * 어느 Task든 실패하면 Discord 알림(on_failure_callback)
 
-설계 포인트 (5회차 과제 3대 항목):
+설계 포인트:
   ① DAG 구조     : 위 선형 체인 (각 Task = 우리 실제 스크립트 1개)
   ② retry·backoff: 인프라성 Task(fetch/produce/preprocess)는 재시도 O(지수 백오프),
                    데이터 품질 Task(quality_check)는 재시도 X → 바로 알림
   ③ 스케줄·날짜  : @daily. 리플레이 데이터라 '데이터 날짜(event_time)'와
                    '실행 날짜(logical_date)'를 분리 (아래 참고)
 
-멱등성(보너스): preprocess가 overwrite(truncate)+event_id 중복제거라
+멱등성: preprocess가 overwrite(truncate)+event_id 중복제거라
              같은 날 두 번 돌려도 detection_result 결과가 같다.
 
 리플레이 날짜 매핑: 데이터 날짜 = 배틀 발생 시각(event_time), 실행 날짜 = DAG logical_date.
@@ -25,7 +25,7 @@ dag.py — 5회차: Airflow DAG (수집 → 전송 → 전처리 → 품질체�
 ----------------------------------------------------------------
 실행 요건 (중요):
   Airflow 가 프로젝트 스크립트·Kafka·Spark 에 접근할 수 있어야 한다.
-  로컬 standalone 실행(자료 권장) 또는 docker-compose airflow 에:
+  로컬 standalone 실행(권장) 또는 docker-compose airflow 에:
     - 프로젝트 마운트:  ./:/opt/project   (PROJECT_DIR 로 지정)
     - 파이썬 deps:      kafka-python, lz4, requests (producer/fetch 용)
     - Spark 접근:       아래 spark_preprocess 주석 참고 (SparkSubmitOperator 권장)

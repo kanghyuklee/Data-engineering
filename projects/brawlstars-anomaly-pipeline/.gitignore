@@ -5,11 +5,14 @@ data/
 # 환경변수 (API 토큰)
 .env
 
-# 과제 제출용 zip (소스 repo에는 제외)
+# 배포용 zip (소스 repo에는 제외)
 *.zip
 
-# 디스코드 제출용 증빙 스크린샷 (로컬 전용, architecture.png는 예외로 커밋됨)
+# 실행 증빙 스크린샷 (로컬 전용, architecture.png는 예외로 커밋됨)
 *_capture*.png
+
+# 로컬 전용 메모
+NOTES.md
 
 # 파이썬
 __pycache__/
