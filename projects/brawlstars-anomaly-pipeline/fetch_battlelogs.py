@@ -56,7 +56,7 @@ class ApiError(Exception):
 
 
 def _get(path: str, max_retries: int = 5) -> dict:
-    """GET helper. 태그의 '#'는 %23으로 인코딩. 429/5xx는 backoff 재시도."""
+    """GET helper. 태그의 '#'는 %23으로 인코딩. 429/5xx/네트워크 오류는 backoff 재시도."""
     url = f"{BASE}{path}"
     headers = {"Authorization": f"Bearer {TOKEN}"}
 
@@ -67,7 +67,17 @@ def _get(path: str, max_retries: int = 5) -> dict:
             time.sleep(_min_interval[0] - gap)
         _last_call[0] = time.time()
 
-        resp = requests.get(url, headers=headers, timeout=10)
+        try:
+            # timeout=(연결 5s, 읽기 20s). 네트워크가 느려도 읽기는 20s까지 기다림.
+            resp = requests.get(url, headers=headers, timeout=(5, 20))
+        except (requests.exceptions.Timeout, requests.exceptions.ConnectionError) as e:
+            # 타임아웃·연결 끊김은 '일시 장애'다 → backoff 후 재시도.
+            # 끝까지 실패하면 ApiError로 올려서(아래 for 종료 후) 크롤이 '이 태그 하나만'
+            # 건너뛰게 한다. 과거엔 이 예외가 안 잡혀 크롤 전체가 죽고 큐(수만 건)가 날아갔음.
+            wait = 2 ** attempt
+            print(f"  네트워크 오류({type(e).__name__}) → {wait}s 후 재시도 ({attempt+1}/{max_retries})")
+            time.sleep(wait)
+            continue
 
         if resp.status_code == 200:
             return resp.json()
@@ -121,24 +131,43 @@ def crawl(seeds: list, max_players: int, out_dir: str):
         if tag in seen:
             continue
         seen.add(tag)
+
+        fpath = os.path.join(out_dir, f"{tag.strip('#')}.json")
+
+        # 재개(이어받기): 이미 받아둔 계정이면 API를 다시 부르지 않고 디스크에서 읽어
+        #   큐만 확장한다. → 중간에 죽어 재실행해도 받은 건 건너뛰고 이어서 수집(멱등).
+        if os.path.exists(fpath):
+            try:
+                with open(fpath, encoding="utf-8") as f:
+                    battles = json.load(f)
+            except (json.JSONDecodeError, OSError):
+                battles = None          # 깨진 파일 → 아래에서 새로 받음
+            if battles is not None:
+                for b in battles:
+                    for t in _tags_in_battle(b):
+                        if t not in seen:
+                            q.append(t)
+                continue
+
         try:
             battles = battlelog(tag)
         except ApiError as e:
             print(f"skip {tag}: {e}")
             continue
 
-        with open(os.path.join(out_dir, f"{tag.strip('#')}.json"), "w", encoding="utf-8") as f:
+        with open(fpath, "w", encoding="utf-8") as f:
             json.dump(battles, f, ensure_ascii=False)
         saved += 1
         if saved % 50 == 0:
-            print(f"  ... {saved}명 저장 (큐 대기 {len(q)})")
+            print(f"  ... {saved}명 신규 저장 (큐 대기 {len(q)})")
 
         for b in battles:                       # 상대 태그로 큐 확장
             for t in _tags_in_battle(b):
                 if t not in seen:
                     q.append(t)
 
-    print(f"done. {saved}명 저장 -> {out_dir}")
+    print(f"done. 이번 실행 신규 {saved}명 저장 -> {out_dir} "
+          f"(디렉터리 총 {len(os.listdir(out_dir))}개 파일)")
 
 
 def main():
@@ -149,7 +178,8 @@ def main():
     p.add_argument("--tag", help="이거 하나만 주면 단일 태그 테스트 (토큰 확인용)")
     p.add_argument("--country", default="global")
     p.add_argument("--seeds", type=int, default=200, help="랭킹 상위 몇 명에서 시작할지")
-    p.add_argument("--max-players", type=int, default=2000)
+    p.add_argument("--max-players", type=int, default=2000,
+                   help="이번 실행에서 '신규로' 받을 계정 수 (이미 받은 건 건너뜀). 재실행하면 이어서 더 모임")
     p.add_argument("--rps", type=float, default=3.0, help="초당 요청 수 (낮출수록 안전)")
     p.add_argument("--out", default="data/raw")
     args = p.parse_args()

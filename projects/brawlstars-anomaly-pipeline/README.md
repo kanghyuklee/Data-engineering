@@ -201,8 +201,18 @@ python producer.py --in data/raw --rate 300   # 전송 (초당 300건)
 | `git push` → `rejected (fetch first)` | push 거부 메시지 | 원격에 먼저 올라간 커밋 존재 | `git fetch` + `git rebase` 후 push |
 | `bash` 실행 실패 (`execvpe /bin/bash`) | 에러 메시지 | PowerShell의 `bash`가 미설정 WSL로 연결 | **Git Bash**에서 실행 |
 | (API) `403 Forbidden` | 응답 코드 | 토큰 등록 IP와 현재 IP 불일치 | developer 포털에서 현재 IP로 키 재발급 |
+| (수집) `ReadTimeout … handshake timed out` → 크롤 전체 중단 | 스택트레이스 + "411명 저장 후 종료" | 네트워크 일시 타임아웃을 재시도 안 해, 1건 실패에 크롤 전체가 죽고 대기 큐(수만 건) 유실 | `_get`에 timeout·연결오류 backoff 재시도, 재시도 소진 시 그 태그만 skip + 재실행 이어받기 (아래 상세) |
 
 > 핵심: 증상이 나오면 **에러 메시지를 근거로 원인을 하나씩 좁혀** 해결함. 환경(Windows/Git Bash) 이슈가 대부분이었고 파이프라인 로직 문제는 아니었음.
+
+### 수집기 내구성 보강 — 실제 장애 → 조치 (`fetch_battlelogs.py`)
+
+- **상황**: `--max-players 2000`으로 대량 수집 중, **411명 저장 시점**에 `requests.exceptions.ReadTimeout`(SSL handshake timed out, `api.brawlstars.com:443`)으로 **크롤 프로세스 전체가 종료**됨. 메모리에 있던 대기 큐(약 5.4만 건)도 함께 유실.
+- **원인**: `_get`은 `429/5xx`만 재시도하고 **네트워크 타임아웃·연결 끊김(`Timeout`/`ConnectionError`)은 잡지 않음** → 단 한 번의 일시 장애가 전체 수집을 중단시키는 **단일 실패점**. 게다가 수집은 재개 수단이 없어 재실행하면 처음부터였음.
+- **조치**:
+  1. **`_get`** — `Timeout`·`ConnectionError`를 잡아 **지수 backoff 재시도**(`2^n`초), 재시도 소진 시 `ApiError`로 올려 **그 태그 하나만 skip**(크롤은 계속). 읽기 타임아웃도 `10s → (connect 5s, read 20s)`로.
+  2. **`crawl`** — 출력 파일이 이미 있으면 **API를 다시 호출하지 않고 디스크에서 읽어 큐만 확장** → 중간에 죽어도 **재실행하면 받은 건 건너뛰고 이어서 수집**(멱등 재개). `--max-players`는 "이번 실행에서 신규로 받을 계정 수"로 의미 정리.
+- **효과**: 일시 네트워크 장애가 **1건 skip**으로 흡수되고, 수집이 **중단돼도 손실 없이 이어받음** → 수집 구간의 단일 실패점 제거(안정적 파이프라인 목표에 부합).
 
 ## 7. 재시작과 멱등성 (멈춰도 안전하게)
 
