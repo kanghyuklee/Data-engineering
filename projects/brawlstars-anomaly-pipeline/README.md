@@ -214,6 +214,16 @@ python producer.py --in data/raw --rate 300   # 전송 (초당 300건)
   2. **`crawl`** — 출력 파일이 이미 있으면 **API를 다시 호출하지 않고 디스크에서 읽어 큐만 확장** → 중간에 죽어도 **재실행하면 받은 건 건너뛰고 이어서 수집**(멱등 재개). `--max-players`는 "이번 실행에서 신규로 받을 계정 수"로 의미 정리.
 - **효과**: 일시 네트워크 장애가 **1건 skip**으로 흡수되고, 수집이 **중단돼도 손실 없이 이어받음** → 수집 구간의 단일 실패점 제거(안정적 파이프라인 목표에 부합).
 
+### 수집기 처리량 개선 — 동시 요청 (`fetch_battlelogs.py`)
+
+- **상황/원인**: 대량 수집이 **초당 1건**밖에 안 됨. `requests`가 **동기·단일 스레드**라 "요청 → 응답 대기 → 다음 요청"을 순차로 하는데, API 왕복(RTT)이 계정당 ~1초 → `--rps`를 올려도 **왕복 대기가 병목**이라 안 빨라짐. 5만 건(2천 계정)은 괜찮지만 50만 건(2만 계정)은 ~5시간.
+- **조치**:
+  1. **`ThreadPoolExecutor`(기본 workers 12)** — 요청을 동시에 여러 개 날려 **왕복 대기를 겹침**. BFS는 in-flight를 `workers×2`로 유지하는 producer-consumer로 전환(`wait(FIRST_COMPLETED)`).
+  2. **스레드 안전 rate limit** — `_get`의 호출 간격 로직을 `Lock`으로 감쌈. sleep은 lock 안에서 '순번'만 맞추고 네트워크 대기는 lock 밖이라 요청끼리 겹침 → **전체 속도는 `--rps`가 상한**(429 예방), 동시성은 처리량만 올림.
+  3. 기존 **재개(이어받기)·timeout 재시도**는 worker 안에 그대로.
+- **트레이드오프**: 동시성을 너무 올리면 `429 rate limit`/IP 차단 위험 → **`--rps`(전체 상한) + `--workers`(동시성)** 를 분리해 조절. 권장 시작값 `--rps 10 --workers 12`(≈10배). 더 빠르게는 `--rps` 상향(429 뜨면 backoff가 흡수하지만 과하면 낮추기).
+- **효과**: `--rps 10` 기준 ~10계정/초 → 5만 건 ≈ 몇 분, 50만 건 ≈ 30분대. `--rps`만 올려 조절.
+
 ## 7. 재시작과 멱등성 (멈춰도 안전하게)
 
 ### 멱등성 2종 — 구분이 핵심
@@ -474,10 +484,11 @@ Airflow가 프로젝트 스크립트·Kafka·Spark에 접근해야 함:
 ```bash
 # 토큰 1명 테스트 (403이면 IP로 키 재발급)
 PYTHONUTF8=1 python fetch_battlelogs.py --tag "#29C8PULJ9"
-# 대량 수집 (신규 N명, 계정당 25전). 중간에 죽어도 재실행하면 이어받음
-PYTHONUTF8=1 python fetch_battlelogs.py --country global --seeds 200 --max-players 2000 --rps 5 --out data/raw
+# 대량 수집 (동시 요청). 중간에 죽어도 재실행하면 이어받음
+PYTHONUTF8=1 python fetch_battlelogs.py --country global --seeds 200 --max-players 2000 --rps 10 --workers 12 --out data/raw
 ```
 - `seeds`=시작점(랭킹 상위), `max-players`=이번 실행 신규 저장 수. **총 건수 ≈ 계정수 × 25**.
+- `--workers`=동시 요청 수(처리량↑), `--rps`=전체 속도 상한(429 예방). 느리면 `--rps` 상향. → §6 "수집기 처리량 개선".
 - 네트워크 타임아웃은 backoff 재시도 → 끝내 실패 시 그 태그만 skip(크롤 유지). → §6 "수집기 내구성 보강".
 
 ### 2) Kafka 기동 + 토픽
