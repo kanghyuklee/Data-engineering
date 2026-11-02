@@ -5,9 +5,10 @@ dag.py — Airflow DAG (수집 → 전송 → 전처리 → 품질체크)
 수동으로 하던  producer.py → spark-submit preprocess.py  순서를 Airflow가 묶는다.
 
 흐름:
-  fetch_battlelogs → produce_to_kafka → spark_preprocess → quality_check
-  (API 수집)         (리플레이 전송)      (전처리+저장+DLQ)    (결과 검증)
+  fetch_battlelogs → produce_to_kafka → spark_preprocess → ml_detect → match_fixing → quality_check
+  (API 수집)         (리플레이 전송)      (전처리+저장+DLQ)   (ML점수)    (승부조작)     (결과 검증)
   * 어느 Task든 실패하면 Discord 알림(on_failure_callback)
+  * 탐지 3종: 룰(preprocess) + ML/IsolationForest(ml_detect) + 그래프(match_fixing)
 
 설계 포인트:
   ① DAG 구조     : 위 선형 체인 (각 Task = 우리 실제 스크립트 1개)
@@ -160,7 +161,21 @@ with DAG(
         ),
     )
 
-    # ── ④ 품질 체크 (실패 시 알림) ─────────────────────────────
+    # ── ④ ML 이상탐지 (IsolationForest) ────────────────────────
+    #   detection_result 피처 → ml_score. preprocess 다음(결과 테이블 필요).
+    t_ml = BashOperator(
+        task_id="ml_detect",
+        bash_command=f"cd {PROJECT} && PG_HOST=postgres python ml_detect.py",
+    )
+
+    # ── ⑤ 그래프 승부조작 탐지 (상대 반복 쌍) ──────────────────
+    #   Parquet opponents → max_opp_repeat (매칭전만). preprocess가 쓴 Parquet 필요.
+    t_mf = BashOperator(
+        task_id="match_fixing",
+        bash_command=f"cd {PROJECT} && PG_HOST=postgres python match_fixing.py",
+    )
+
+    # ── ⑥ 품질 체크 (실패 시 알림) ─────────────────────────────
     #   데이터 품질 실패는 재시도 무의미 → retries=0 으로 덮어씀.
     t_qc = PythonOperator(
         task_id="quality_check",
@@ -168,5 +183,5 @@ with DAG(
         retries=0,
     )
 
-    # 의존성: 수집 → 전송 → 전처리 → 품질체크
-    t_fetch >> t_produce >> t_preprocess >> t_qc
+    # 의존성: 수집 → 전송 → 전처리 → ML → 승부조작 → 품질체크
+    t_fetch >> t_produce >> t_preprocess >> t_ml >> t_mf >> t_qc

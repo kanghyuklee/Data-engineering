@@ -9,4 +9,5 @@ RUN apt-get update \
  && rm -rf /var/lib/apt/lists/*
 
 USER airflow
-RUN pip install --no-cache-dir kafka-python lz4 requests
+# fetch/produce 용(kafka-python·lz4·requests) + ML/그래프 탐지 용(scikit-learn·numpy·pyarrow)
+RUN pip install --no-cache-dir kafka-python lz4 requests scikit-learn numpy pyarrow
