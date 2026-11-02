@@ -17,6 +17,7 @@ CREATE TABLE IF NOT EXISTS detection_result (
     anomaly_score   DOUBLE PRECISION,             -- 룰 기반 이상 점수 (0~1)
     anomaly_reason  TEXT,                          -- 'bot' / 'boosting' / 'normal'
     ml_score        DOUBLE PRECISION,             -- ML(IsolationForest) 이상도 (0~1, ml_detect.py가 채움)
+    max_opp_repeat  INT,                          -- 한 상대를 만난 최대 횟수 (승부조작 신호, match_fixing.py가 채움)
     is_injected     SMALLINT,                     -- 평가용 정답 라벨(가짜 이상 계정=1)
     updated_at      TIMESTAMPTZ
 );
