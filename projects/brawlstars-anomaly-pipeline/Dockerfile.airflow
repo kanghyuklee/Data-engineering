@@ -9,5 +9,7 @@ RUN apt-get update \
  && rm -rf /var/lib/apt/lists/*
 
 USER airflow
-# fetch/produce 용(kafka-python·lz4·requests) + ML/그래프 탐지 용(scikit-learn·numpy·pyarrow)
-RUN pip install --no-cache-dir kafka-python lz4 requests scikit-learn numpy pyarrow
+# fetch/produce 용(kafka-python·lz4·requests) + ML/그래프 탐지 용(scikit-learn·pyarrow)
+#   numpy<2 고정: airflow 이미지의 pandas가 numpy 1.x로 빌드돼 있어, numpy 2.x를 깔면
+#   'numpy.dtype size changed' ABI 충돌이 남 → 1.x로 맞춤.
+RUN pip install --no-cache-dir kafka-python lz4 requests scikit-learn "numpy<2" pyarrow
