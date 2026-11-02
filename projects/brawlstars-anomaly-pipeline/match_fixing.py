@@ -30,20 +30,30 @@ PG = dict(
     dbname="brawlstars", user="brawl", password="brawl",
 )
 THRESHOLD = int(os.environ.get("MF_THRESHOLD", "5"))  # 같은 상대 이 횟수 이상 = 의심
+# 매칭 기반 대전만 분석. 친선전(friendly)·토너먼트·챌린지는 상대를 직접 고를 수 있어
+#   같은 상대 반복이 정상 → 승부조작 신호가 아님 → 제외해야 오탐이 안 생긴다.
+MATCHMADE = set(os.environ.get("MF_TYPES", "ranked,soloRanked").split(","))
 
 
 def main():
     t = (ds.dataset(PARQUET, format="parquet", partitioning="hive")
-         .to_table(columns=["player_tag", "opponents"]))
+         .to_table(columns=["player_tag", "opponents", "type"]))
     rows = t.to_pylist()
 
-    # (A, B) = A가 B를 상대로 만난 횟수
+    # (A, B) = A가 B를 상대로 만난 횟수 (매칭전만 — 친선전·토너먼트 제외)
     pair = Counter()
+    used = 0
     for r in rows:
+        if r["type"] not in MATCHMADE:          # 상대 선택 가능한 대전은 제외
+            continue
+        used += 1
         a, opps = r["player_tag"], (r["opponents"] or [])
         for b in opps:
             if b and b != a:
                 pair[(a, b)] += 1
+
+    print(f"전체 {len(rows)}건 중 매칭전({'/'.join(sorted(MATCHMADE))}) {used}건만 사용 "
+          f"(친선전·토너먼트·챌린지 제외)")
 
     # 계정별 '한 상대를 최대 몇 번 만났나' + 그 상대
     max_rep, max_opp = defaultdict(int), {}
