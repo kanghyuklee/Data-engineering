@@ -5,10 +5,11 @@ dag.py — Airflow DAG (수집 → 전송 → 전처리 → 품질체크)
 수동으로 하던  producer.py → spark-submit preprocess.py  순서를 Airflow가 묶는다.
 
 흐름:
-  fetch_battlelogs → produce_to_kafka → spark_preprocess → ml_detect → match_fixing → quality_check
-  (API 수집)         (리플레이 전송)      (전처리+저장+DLQ)   (ML점수)    (승부조작)     (결과 검증)
+  fetch → produce → spark_preprocess → ml_detect → match_fixing → combine_scores → quality_check
+  (수집)  (전송)     (전처리+DLQ+룰)     (ML점수)    (승부조작)      (통합 final_score)  (검증)
   * 어느 Task든 실패하면 Discord 알림(on_failure_callback)
   * 탐지 3종: 룰(preprocess) + ML/IsolationForest(ml_detect) + 그래프(match_fixing)
+    → combine_scores가 MAX로 통합(final_score) + 출처(flagged_by)
 
 설계 포인트:
   ① DAG 구조     : 위 선형 체인 (각 Task = 우리 실제 스크립트 1개)
@@ -175,7 +176,14 @@ with DAG(
         bash_command=f"cd {PROJECT} && PG_HOST=postgres python match_fixing.py",
     )
 
-    # ── ⑥ 품질 체크 (실패 시 알림) ─────────────────────────────
+    # ── ⑥ 통합 점수 (룰·ML·승부조작 → final_score) ────────────
+    #   세 신호를 MAX로 합치고 flagged_by(출처) 기록. ml·mf 다음.
+    t_combine = BashOperator(
+        task_id="combine_scores",
+        bash_command=f"cd {PROJECT} && PG_HOST=postgres python combine_scores.py",
+    )
+
+    # ── ⑦ 품질 체크 (실패 시 알림) ─────────────────────────────
     #   데이터 품질 실패는 재시도 무의미 → retries=0 으로 덮어씀.
     t_qc = PythonOperator(
         task_id="quality_check",
@@ -183,5 +191,5 @@ with DAG(
         retries=0,
     )
 
-    # 의존성: 수집 → 전송 → 전처리 → ML → 승부조작 → 품질체크
-    t_fetch >> t_produce >> t_preprocess >> t_ml >> t_mf >> t_qc
+    # 의존성: 수집 → 전송 → 전처리 → ML → 승부조작 → 통합점수 → 품질체크
+    t_fetch >> t_produce >> t_preprocess >> t_ml >> t_mf >> t_combine >> t_qc
