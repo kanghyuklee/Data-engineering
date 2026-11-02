@@ -29,6 +29,9 @@ DLQ = "bs.dlq"                                             # 불량 레코드 �
 PG_URL = os.environ.get("PG_URL", "jdbc:postgresql://postgres:5432/brawlstars")
 PG_PROPS = {"user": "brawl", "password": "brawl", "driver": "org.postgresql.Driver"}
 OUT_PARQUET = os.environ.get("OUT_PARQUET", "/app/data/parquet/battles")
+# 집계 대상 = 매칭전만. 친선전·토너먼트는 상대를 고를 수 있고 트로피 변동도 없어
+#   win_rate·trophy를 왜곡 → 봇/부스팅 신호가 흐려짐. (Parquet 원본엔 전부 유지)
+MATCHMADE = ("ranked", "soloRanked")
 
 # producer가 보낸 공통 껍데기 + payload 구조
 PAYLOAD = StructType([
@@ -112,9 +115,11 @@ def main():
     (df.withColumn("dt", F.to_date("event_time"))
        .write.mode("overwrite").partitionBy("dt").parquet(OUT_PARQUET))
 
-    # ── 4) 계정별 집계 → 이상 스코어 ─────────────────────────────
+    # ── 4) 계정별 집계 → 이상 스코어 (매칭전만 집계 — Parquet 원본은 전체 유지) ──
+    competitive = df.filter(F.col("type").isin(*MATCHMADE))
+    comp_cnt = competitive.count()
     is_win = F.when(F.col("result") == "victory", 1.0).otherwise(0.0)
-    agg = (df.groupBy("player_tag").agg(
+    agg = (competitive.groupBy("player_tag").agg(
         F.count("*").alias("battles"),
         F.round(F.avg(is_win), 3).alias("win_rate"),
         F.sum("trophy_change").alias("trophy_gain"),
@@ -150,6 +155,7 @@ def main():
                               f"정제 {clean_cnt} + DLQ {dlq_cnt} (데이터 유실/중복계산 의심)")
     print(f"[입력] Kafka 메시지 {total_in}건  →  [정제] {clean_cnt}건  ·  [DLQ 격리] {dlq_cnt}건 (불량은 bs.dlq로)")
     print(f"[대조] 입력 {total_in} = 정제 {clean_cnt} + DLQ {dlq_cnt} + 중복제거 {dup_removed}  → 조용히 사라진 데이터 0 확인")
+    print(f"[집계] 매칭전(ranked/soloRanked) {comp_cnt}건만 계정별 집계 (친선전 등 {clean_cnt - comp_cnt}건은 Parquet 원본엔 유지)")
     print("[출력] 계정별 탐지 결과 상위 의심:")
     scored.orderBy(F.desc("anomaly_score")).show(10, truncate=False)
 
