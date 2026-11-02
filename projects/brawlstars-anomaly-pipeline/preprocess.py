@@ -16,6 +16,7 @@ Kafka에서 '배치로' 읽는다(earliest~latest 전체). 재실행하면 전�
     /app/preprocess.py
 """
 
+import argparse
 import os
 
 from pyspark.sql import SparkSession, Window
@@ -61,10 +62,17 @@ ENVELOPE = StructType([
 
 
 def main():
+    ap = argparse.ArgumentParser()
+    ap.add_argument("--date", default="",
+                    help="처리할 데이터 날짜 YYYY-MM-DD (비우면 전체 재처리). 리플레이 backfill용")
+    target_date = ap.parse_args().date.strip()
+
     spark = (SparkSession.builder.appName("bs-preprocess")
              # 파일 커밋 v2: 태스크 출력을 최종 경로에 바로 쓴다(_temporary rename/merge 최소화).
              #   Windows 바인드 마운트·OneDrive 동기화에서 나던 _temporary FileNotFound 완화.
              .config("spark.hadoop.mapreduce.fileoutputcommitter.algorithm.version", "2")
+             # dt 파티션 단위 덮어쓰기 → target_date 처리 시 다른 날짜 파티션은 보존.
+             .config("spark.sql.sources.partitionOverwriteMode", "dynamic")
              .getOrCreate())
     spark.sparkContext.setLogLevel("WARN")
 
@@ -111,12 +119,16 @@ def main():
           .dropDuplicates(["event_id"]))              # 중복: event_id 기준 제거
     clean_cnt = df.count()
 
-    # ── 3) 정제 원본 → Parquet (날짜 파티셔닝, 재처리용) ──────────────
-    (df.withColumn("dt", F.to_date("event_time"))
+    # 처리 범위: target_date 지정 시 그 날짜(dt)만 처리(backfill). 비우면 전체.
+    scope = (df.filter(F.to_date("event_time") == F.lit(target_date))
+             if target_date else df)
+
+    # ── 3) 정제 원본 → Parquet (dt 파티셔닝). dynamic overwrite라 지정 날짜만 교체 ──
+    (scope.withColumn("dt", F.to_date("event_time"))
        .write.mode("overwrite").partitionBy("dt").parquet(OUT_PARQUET))
 
     # ── 4) 계정별 집계 → 이상 스코어 (매칭전만 집계 — Parquet 원본은 전체 유지) ──
-    competitive = df.filter(F.col("type").isin(*MATCHMADE))
+    competitive = scope.filter(F.col("type").isin(*MATCHMADE))
     comp_cnt = competitive.count()
     is_win = F.when(F.col("result") == "victory", 1.0).otherwise(0.0)
     agg = (competitive.groupBy("player_tag").agg(
@@ -155,7 +167,8 @@ def main():
                               f"정제 {clean_cnt} + DLQ {dlq_cnt} (데이터 유실/중복계산 의심)")
     print(f"[입력] Kafka 메시지 {total_in}건  →  [정제] {clean_cnt}건  ·  [DLQ 격리] {dlq_cnt}건 (불량은 bs.dlq로)")
     print(f"[대조] 입력 {total_in} = 정제 {clean_cnt} + DLQ {dlq_cnt} + 중복제거 {dup_removed}  → 조용히 사라진 데이터 0 확인")
-    print(f"[집계] 매칭전(ranked/soloRanked) {comp_cnt}건만 계정별 집계 (친선전 등 {clean_cnt - comp_cnt}건은 Parquet 원본엔 유지)")
+    print(f"[범위] 처리 범위 = {('target_date=' + target_date) if target_date else '전체'} "
+          f"· 매칭전(ranked/soloRanked) {comp_cnt}건 집계 (Parquet 원본은 전체 유지)")
     print("[출력] 계정별 탐지 결과 상위 의심:")
     scored.orderBy(F.desc("anomaly_score")).show(10, truncate=False)
 

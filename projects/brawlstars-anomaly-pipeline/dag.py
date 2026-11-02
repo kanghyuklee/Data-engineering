@@ -5,8 +5,9 @@ dag.py — Airflow DAG (수집 → 전송 → 전처리 → 품질체크)
 수동으로 하던  producer.py → spark-submit preprocess.py  순서를 Airflow가 묶는다.
 
 흐름:
-  fetch → produce → spark_preprocess → ml_detect → match_fixing → combine_scores → quality_check
-  (수집)  (전송)     (전처리+DLQ+룰)     (ML점수)    (승부조작)      (통합 final_score)  (검증)
+  resolve_target_date → fetch → produce → spark_preprocess → ml_detect → match_fixing → combine_scores → quality_check
+  (처리 날짜 결정)       (수집)  (전송)     (전처리+DLQ+룰)     (ML점수)    (승부조작)      (통합 final_score)  (검증)
+  * target_date 비우면 전체 재처리, 날짜 지정 시 그 날만(backfill) — 리플레이 날짜 매핑
   * 어느 Task든 실패하면 Discord 알림(on_failure_callback)
   * 탐지 3종: 룰(preprocess) + ML/IsolationForest(ml_detect) + 그래프(match_fixing)
     → combine_scores가 MAX로 통합(final_score) + 출처(flagged_by)
@@ -80,6 +81,15 @@ def _notify_discord(context):
 default_args["on_failure_callback"] = _notify_discord
 
 
+def resolve_target_date(**ctx):
+    """처리할 데이터 날짜 결정: params.target_date 있으면 그 값, 없으면 '' (전체 재처리).
+    리플레이 데이터라 '어제'가 의미 없어 기본은 전체; 특정 날짜 backfill은 target_date로 넘긴다.
+    반환값은 XCom으로 spark_preprocess의 --date 에 전달된다."""
+    d = (ctx["params"].get("target_date") or "").strip()
+    print(f"[resolve] 처리 날짜 = {d or '(전체 재처리)'}")
+    return d
+
+
 def quality_check(**ctx):
     """
     결과 품질 점검. 기준 미달이면 raise → Task 실패 → 알림.
@@ -122,8 +132,14 @@ with DAG(
     catchup=False,                                  # 과거분 몰아서 돌릴 땐 True + backfill
     max_active_runs=1,                              # 같은 DAG가 동시에 두 번 안 돌게(overwrite 충돌 방지)
     tags=["brawlstars", "anomaly"],
-    params={"max_players": 50, "rate": 2000},        # UI에서 조정 가능 (rate=초당 전송)
+    params={"max_players": 50, "rate": 2000, "target_date": ""},  # target_date: 비우면 전체, 날짜 지정 시 그 날만
 ) as dag:
+
+    # ── ⓪ 처리 날짜 결정 (전체 or params.target_date) ─────────
+    t_resolve = PythonOperator(
+        task_id="resolve_target_date",
+        python_callable=resolve_target_date,
+    )
 
     # ── ① 수집 (Supercell API) ─────────────────────────────────
     #   API 429·타임아웃은 일시적 → 재시도 O (fetch_battlelogs 에 429 backoff 내장).
@@ -158,7 +174,7 @@ with DAG(
             "--conf spark.jars.ivy=/tmp/.ivy2 "
             "--packages org.apache.spark:spark-sql-kafka-0-10_2.12:3.5.3,"
             "org.postgresql:postgresql:42.7.3 "
-            "/app/preprocess.py"
+            "/app/preprocess.py --date \"{{ ti.xcom_pull(task_ids='resolve_target_date') }}\""
         ),
     )
 
@@ -191,5 +207,5 @@ with DAG(
         retries=0,
     )
 
-    # 의존성: 수집 → 전송 → 전처리 → ML → 승부조작 → 통합점수 → 품질체크
-    t_fetch >> t_produce >> t_preprocess >> t_ml >> t_mf >> t_combine >> t_qc
+    # 의존성: 날짜결정 → 수집 → 전송 → 전처리 → ML → 승부조작 → 통합점수 → 품질체크
+    t_resolve >> t_fetch >> t_produce >> t_preprocess >> t_ml >> t_mf >> t_combine >> t_qc
