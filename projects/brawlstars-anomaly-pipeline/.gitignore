@@ -13,6 +13,7 @@ data/
 
 # 로컬 전용 메모
 NOTES.md
+WORKLOG.md
 
 # 파이썬
 __pycache__/

@@ -14,8 +14,9 @@ CREATE TABLE IF NOT EXISTS detection_result (
     win_rate        DOUBLE PRECISION,             -- 승률 (0~1)
     trophy_gain     INT,                          -- 누적 트로피 증감
     brawler_variety INT,                          -- 사용 브롤러 종류 수 (1이면 봇 의심)
-    anomaly_score   DOUBLE PRECISION,             -- 이상 점수 (0~1)
+    anomaly_score   DOUBLE PRECISION,             -- 룰 기반 이상 점수 (0~1)
     anomaly_reason  TEXT,                          -- 'bot' / 'boosting' / 'normal'
+    ml_score        DOUBLE PRECISION,             -- ML(IsolationForest) 이상도 (0~1, ml_detect.py가 채움)
     is_injected     SMALLINT,                     -- 평가용 정답 라벨(가짜 이상 계정=1)
     updated_at      TIMESTAMPTZ
 );
