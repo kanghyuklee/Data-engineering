@@ -117,7 +117,9 @@ def quality_check(**ctx):
         raise AirflowFailException("detection_result 가 비었음 (전처리 실패 의심)")
     if null_cnt != 0:                      # 2) 점수에 null 있으면 스코어 로직 이상
         raise AirflowFailException(f"anomaly_score NULL {null_cnt}건 (스코어 로직 점검)")
-    if suspicious >= total:                # 3) 전 계정이 의심이면 임계값/데이터 이상
+    # 3) 전 계정이 의심이면 임계값/데이터 이상 — 단 표본이 충분할 때만.
+    #    (단일 날짜 backfill처럼 표본이 작으면 전부 의심이어도 정상일 수 있어 오탐 방지)
+    if total >= 20 and suspicious >= total:
         raise AirflowFailException(f"전 계정({total})이 의심으로 분류됨 (임계값/수집 이상 의심)")
 
     print(f"[품질] detection_result {total}행 · null 0 · 의심 {suspicious}행 — 통과")
