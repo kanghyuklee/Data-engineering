@@ -36,6 +36,7 @@ import os
 from datetime import datetime, timedelta
 
 from airflow import DAG
+from airflow.exceptions import AirflowFailException
 from airflow.operators.bash import BashOperator
 from airflow.operators.python import PythonOperator
 
@@ -98,12 +99,14 @@ def quality_check(**ctx):
     finally:
         conn.close()
 
-    # 1) 비어 있으면 전처리가 실패한 것
-    assert total and total > 0, "detection_result 가 비었음 (전처리 실패 의심)"
-    # 2) 점수에 null 있으면 스코어 로직 이상
-    assert null_cnt == 0, f"anomaly_score NULL {null_cnt}건 (스코어 로직 점검)"
-    # 3) 전 계정이 의심이면 임계값/데이터 이상 (전부 이상일 리 없음)
-    assert suspicious < total, f"전 계정({total})이 의심으로 분류됨 (임계값/수집 이상 의심)"
+    # 데이터 품질 실패는 재시도해도 똑같음 → AirflowFailException으로 '바로 실패 + 알림'
+    #   (retries=0과 한 쌍. 일반 예외/assert보다 '재시도 안 함' 의도가 명확)
+    if not (total and total > 0):          # 1) 비어 있으면 전처리가 실패한 것
+        raise AirflowFailException("detection_result 가 비었음 (전처리 실패 의심)")
+    if null_cnt != 0:                      # 2) 점수에 null 있으면 스코어 로직 이상
+        raise AirflowFailException(f"anomaly_score NULL {null_cnt}건 (스코어 로직 점검)")
+    if suspicious >= total:                # 3) 전 계정이 의심이면 임계값/데이터 이상
+        raise AirflowFailException(f"전 계정({total})이 의심으로 분류됨 (임계값/수집 이상 의심)")
 
     print(f"[품질] detection_result {total}행 · null 0 · 의심 {suspicious}행 — 통과")
 
@@ -115,6 +118,7 @@ with DAG(
     schedule="@daily",
     start_date=datetime(2026, 10, 1),
     catchup=False,                                  # 과거분 몰아서 돌릴 땐 True + backfill
+    max_active_runs=1,                              # 같은 DAG가 동시에 두 번 안 돌게(overwrite 충돌 방지)
     tags=["brawlstars", "anomaly"],
     params={"max_players": 50, "rate": 2000},        # UI에서 조정 가능 (rate=초당 전송)
 ) as dag:

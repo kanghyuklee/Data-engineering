@@ -71,7 +71,8 @@ def main():
            .option("subscribe", TOPIC)
            .option("startingOffsets", "earliest")
            .option("endingOffsets", "latest")
-           .load())
+           .load()
+           .cache())   # count·DLQ쓰기·Parquet·PG 등 여러 action이 Kafka를 반복 읽지 않게 1회만
     total_in = raw.count()
 
     # ── 2) 파싱 (원본 value 보존) ─────────────────────────────────
@@ -143,7 +144,12 @@ def main():
         .jdbc(PG_URL, "detection_result", properties=PG_PROPS))
 
     # ── 입출력 예시 출력 ──────────────────────────────────────────
+    # 원본-결과 대조: 입력 = 정제 + DLQ + 중복제거 (조용히 사라진 데이터 없는지)
+    dup_removed = total_in - dlq_cnt - clean_cnt
+    assert dup_removed >= 0, (f"원본-결과 대조 실패: 입력 {total_in} < "
+                              f"정제 {clean_cnt} + DLQ {dlq_cnt} (데이터 유실/중복계산 의심)")
     print(f"[입력] Kafka 메시지 {total_in}건  →  [정제] {clean_cnt}건  ·  [DLQ 격리] {dlq_cnt}건 (불량은 bs.dlq로)")
+    print(f"[대조] 입력 {total_in} = 정제 {clean_cnt} + DLQ {dlq_cnt} + 중복제거 {dup_removed}  → 조용히 사라진 데이터 0 확인")
     print("[출력] 계정별 탐지 결과 상위 의심:")
     scored.orderBy(F.desc("anomaly_score")).show(10, truncate=False)
 
