@@ -58,7 +58,11 @@ ENVELOPE = StructType([
 
 
 def main():
-    spark = SparkSession.builder.appName("bs-preprocess").getOrCreate()
+    spark = (SparkSession.builder.appName("bs-preprocess")
+             # 파일 커밋 v2: 태스크 출력을 최종 경로에 바로 쓴다(_temporary rename/merge 최소화).
+             #   Windows 바인드 마운트·OneDrive 동기화에서 나던 _temporary FileNotFound 완화.
+             .config("spark.hadoop.mapreduce.fileoutputcommitter.algorithm.version", "2")
+             .getOrCreate())
     spark.sparkContext.setLogLevel("WARN")
 
     # ── 1) Kafka에서 배치로 읽기 (전체 범위) ──────────────────────────

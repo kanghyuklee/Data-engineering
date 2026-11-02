@@ -58,19 +58,32 @@ services:
     #     /app/preprocess.py
 
   # ---------- Airflow (standalone) ----------
+  #   커스텀 이미지(Dockerfile.airflow): docker CLI + fetch/produce용 python deps 포함.
+  #   실제 DAG 구동용 배선:
+  #     - 프로젝트 전체 마운트(./:/opt/project) → fetch/produce가 스크립트·data/raw 접근
+  #     - docker.sock 마운트 → spark_preprocess가 spark 컨테이너를 `docker exec`로 호출
+  #     - 네트워크 공유(같은 compose) → kafka:29092 · postgres:5432 접근
   airflow:
-    image: apache/airflow:2.9.2
+    build:
+      context: .
+      dockerfile: Dockerfile.airflow
+    image: brawlstars-airflow:local
     container_name: airflow
     depends_on:
       - postgres
+      - kafka
+      - spark
     environment:
       AIRFLOW__CORE__EXECUTOR: LocalExecutor
       AIRFLOW__DATABASE__SQL_ALCHEMY_CONN: postgresql+psycopg2://brawl:brawl@postgres/brawlstars
       AIRFLOW__CORE__LOAD_EXAMPLES: "false"
+      PROJECT_DIR: /opt/project
     ports:
       - "8081:8080"   # Airflow 웹 UI
     volumes:
       - ./dag.py:/opt/airflow/dags/dag.py:ro
+      - ./:/opt/project                          # 프로젝트 스크립트·data/raw 접근
+      - /var/run/docker.sock:/var/run/docker.sock # spark 컨테이너 docker exec용
     command: standalone
 
   # ---------- Grafana (모니터링 대시보드 + 알림) ----------

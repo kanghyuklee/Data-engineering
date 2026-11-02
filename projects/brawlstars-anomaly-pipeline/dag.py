@@ -116,7 +116,7 @@ with DAG(
     start_date=datetime(2026, 10, 1),
     catchup=False,                                  # 과거분 몰아서 돌릴 땐 True + backfill
     tags=["brawlstars", "anomaly"],
-    params={"max_players": 50, "rate": 50},         # UI에서 조정 가능
+    params={"max_players": 50, "rate": 2000},        # UI에서 조정 가능 (rate=초당 전송)
 ) as dag:
 
     # ── ① 수집 (Supercell API) ─────────────────────────────────
@@ -132,8 +132,10 @@ with DAG(
     #   Kafka 연결 일시 끊김 → 재시도 O. event_id 가 결정적이라 재전송해도 중복은 뒤에서 흡수(멱등).
     t_produce = BashOperator(
         task_id="produce_to_kafka",
+        # 컨테이너 안에서 실행되므로 Kafka 주소는 kafka:29092 (localhost 아님)
         bash_command=(f"cd {PROJECT} && "
-                      f"python producer.py --in data/raw --rate {{{{ params.rate }}}}"),
+                      f"python producer.py --in data/raw --rate {{{{ params.rate }}}} "
+                      f"--bootstrap kafka:29092"),
     )
 
     # ── ③ Spark 전처리 + 저장 + DLQ ────────────────────────────
@@ -143,8 +145,10 @@ with DAG(
     #     (b) 호스트에서 standalone airflow 실행 → 이 docker 명령 그대로 사용
     t_preprocess = BashOperator(
         task_id="spark_preprocess",
+        # airflow 컨테이너에 마운트된 docker.sock으로, 이미 떠 있는 spark 컨테이너를 호출.
+        #   (airflow 안엔 Spark가 없어 spark 컨테이너 재사용. 운영에선 SparkSubmitOperator 권장)
         bash_command=(
-            "docker compose exec -T spark /opt/spark/bin/spark-submit --master 'local[*]' "
+            "docker exec spark /opt/spark/bin/spark-submit --master 'local[*]' "
             "--conf spark.jars.ivy=/tmp/.ivy2 "
             "--packages org.apache.spark:spark-sql-kafka-0-10_2.12:3.5.3,"
             "org.postgresql:postgresql:42.7.3 "

@@ -473,6 +473,27 @@ Airflow가 프로젝트 스크립트·Kafka·Spark에 접근해야 함:
 - `spark_preprocess`는 Spark 접근 필요 → 운영에선 **`SparkSubmitOperator`** 권장(또는 호스트 standalone 실행)
 - `DISCORD_WEBHOOK` 환경변수 설정 시 실패 알림 전송
 
+### 실제 구동 기록 — 로컬에서 end-to-end green
+
+DAG를 "파싱·UI"만이 아니라 **실제로 끝까지 실행**해본 기록.
+
+**배선 (`Dockerfile.airflow` + docker-compose):** airflow 컨테이너가 파이프라인을 돌리려면 —
+- 프로젝트 마운트 `./:/opt/project` (fetch/produce가 스크립트·`data/raw` 접근)
+- `docker.sock` 마운트 → `spark_preprocess`가 **이미 떠 있는 spark 컨테이너를 `docker exec`** 로 호출
+- 커스텀 이미지(`Dockerfile.airflow`)에 **docker CLI + python deps**(kafka-python·lz4·requests)
+- producer는 컨테이너 내부 실행이라 **`--bootstrap kafka:29092`** (localhost 아님)
+
+**실행:** `docker compose build airflow` → `up -d airflow` → `airflow dags unpause/trigger`.
+UI 로그인 비번을 잃으면(이미지 재빌드 시 파일 사라지나 메타DB의 유저는 유지) `airflow users create` 로 새 admin 생성.
+
+**결과:** `fetch → produce → spark_preprocess → quality_check` **전부 success** (end-to-end green).
+
+**겪은 문제 — Parquet `_temporary` FileNotFound (OneDrive/Windows 마운트):**
+- 증상: `spark_preprocess`가 간헐 실패 — `java.io.FileNotFoundException: .../parquet/battles/_temporary/0/.../dt=… does not exist`
+- 원인: 프로젝트가 **OneDrive 동기화 폴더**라, Spark가 `_temporary`에 쓰고 최종 경로로 rename하는 사이 **OneDrive/Windows 마운트가 파일을 건드려** 목록 조회가 불안정. (직접 실행 땐 되다 안 되다 하던 이유)
+- 조치: SparkSession에 **`spark.hadoop.mapreduce.fileoutputcommitter.algorithm.version=2`** — 태스크 출력을 **최종 경로에 바로 커밋**해 `_temporary` rename/merge를 최소화.
+- 부수 확인: 조치 전에도 **retry(지수 백오프)가 일시 실패를 흡수**해 다음 시도에서 성공 → "인프라성 일시 실패는 재시도로 복구"라는 §9① 설계가 **실제로 동작**함을 확인.
+
 ## 10. 실행 흐름 (end-to-end 런북)
 
 수집 → Kafka → 전송 → Spark → Airflow 를 **처음부터 끝까지** 돌리는 순서. 실제로 돌리며 겪은 포인트까지 포함.
