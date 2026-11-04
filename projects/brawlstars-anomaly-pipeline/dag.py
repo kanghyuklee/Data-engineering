@@ -36,7 +36,9 @@ dag.py — Airflow DAG (수집 → 전송 → 전처리 → 품질체크)
 """
 
 import os
-from datetime import datetime, timedelta
+from datetime import timedelta
+
+import pendulum
 
 from airflow import DAG
 from airflow.exceptions import AirflowFailException
@@ -130,7 +132,7 @@ with DAG(
     default_args=default_args,
     description="브롤스타즈 이상 계정 탐지 배치 (수집→전송→전처리→품질체크)",
     schedule="@daily",
-    start_date=datetime(2026, 10, 1),
+    start_date=pendulum.datetime(2026, 10, 1, tz="Asia/Seoul"),  # tz-aware → @daily가 KST 자정에 뜸
     catchup=False,                                  # 과거분 몰아서 돌릴 땐 True + backfill
     max_active_runs=1,                              # 같은 DAG가 동시에 두 번 안 돌게(overwrite 충돌 방지)
     tags=["brawlstars", "anomaly"],
