@@ -77,6 +77,7 @@ services:
       AIRFLOW__CORE__EXECUTOR: LocalExecutor
       AIRFLOW__DATABASE__SQL_ALCHEMY_CONN: postgresql+psycopg2://brawl:brawl@postgres/brawlstars
       AIRFLOW__CORE__LOAD_EXAMPLES: "false"
+      AIRFLOW__WEBSERVER__DEFAULT_UI_TIMEZONE: Asia/Seoul   # UI 표시 시각을 KST로 (내부 저장은 UTC 유지)
       PROJECT_DIR: /opt/project
     ports:
       - "8081:8080"   # Airflow 웹 UI

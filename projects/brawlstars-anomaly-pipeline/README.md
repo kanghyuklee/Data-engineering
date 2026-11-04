@@ -466,12 +466,15 @@ resolve_target_date → fetch_battlelogs → produce_to_kafka → spark_preproce
 
 ### ② 스케줄 · 날짜
 - `schedule="@daily"`, `catchup=False`
+- **타임존 KST**: `start_date=pendulum.datetime(2026, 10, 1, tz="Asia/Seoul")` → `@daily`가 **KST 자정**(= UTC 15:00)에 발화. UI 표시도 `AIRFLOW__WEBSERVER__DEFAULT_UI_TIMEZONE=Asia/Seoul`로 KST. 단 `logical_date`·실행시각 **내부 저장은 UTC 유지**(표준 — 스케줄 경계·표시만 KST).
 - **리플레이 날짜 매핑**: 데이터 날짜 = 배틀 발생 시각(`event_time`), 실행 날짜 = DAG `logical_date`.
   과거 배틀을 리플레이하므로 **둘은 분리**(특정 날짜 재처리는 `target_date` 파라미터로).
 
 ### ③ 멱등성
 `preprocess`가 **스테이징 overwrite + event_id 중복제거**, `upsert_detection`이 **`ON CONFLICT(player_tag)` 병합**이라, **같은 날 두 번 실행해도 `detection_result` 결과 동일**.
 → "같은 날짜 2회 실행 → 결과 같음"을 그대로 만족. (DLQ만 append라 중복 — 조회용이므로 허용)
+
+> **backfill 누적 검증(2026-11-05)**: `target_date=2025-07-02` 로 backfill → 그 날 매칭전 1건만 staging→upsert 병합, **`detection_result` 2724계정 그대로 유지**(그 1계정만 갱신, 나머지 보존). 전체 overwrite였다면 1계정으로 줄었을 것 → **스테이징+UPSERT 덕에 날짜별 backfill이 누적을 안 깨뜨림**을 확인.
 
 ### 실행 요건
 Airflow가 프로젝트 스크립트·Kafka·Spark에 접근해야 함:
