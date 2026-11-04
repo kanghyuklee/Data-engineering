@@ -2,10 +2,13 @@
 -- PostgreSQL 저장 스키마 (docker-compose가 postgres 최초 기동 시 자동 실행).
 -- 조회/집계가 잦은 '결과'를 여기에 둔다. 정제된 '원본 이벤트'는 Parquet(data/parquet/battles)에 저장.
 --
--- 참고: preprocess.py(Spark)가 detection_result를 overwrite + option("truncate","true")로
---       저장한다. → 테이블을 DROP·재생성하지 않고 TRUNCATE + INSERT 하므로
---       아래 PK·인덱스가 그대로 유지된다. (truncate 옵션이 없으면 Spark가 테이블을
---       재생성해 인덱스가 사라진다.) 그래서 이 스키마는 '문서'이자 '실제 운영 스키마'다.
+-- 참고: preprocess.py(Spark)는 이번 실행분을 detection_result_staging 에 적재하고,
+--       upsert_detection.py 가 detection_result 로 ON CONFLICT(player_tag) DO UPDATE
+--       병합한다. → 이번 배치에 없는 계정은 유지되고(날짜 누적), 아래 PK·인덱스도
+--       보존된다 (detection_result 는 Spark가 직접 쓰지 않아 재생성되지 않음).
+--       그래서 이 스키마는 '문서'이자 '실제 운영 스키마'다.
+--       detection_result_staging 은 Spark overwrite가 매 실행 DROP+CREATE 하는 임시
+--       테이블이라 여기 정의하지 않는다(스키마는 scored DataFrame에서 자동 추론).
 
 -- 계정별 탐지 결과 (preprocess.py의 집계 산출물)
 CREATE TABLE IF NOT EXISTS detection_result (

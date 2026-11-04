@@ -180,8 +180,16 @@ with DAG(
         ),
     )
 
+    # ── ③-2 스테이징 → detection_result UPSERT 병합 ────────────
+    #   Spark는 스테이징에 적재만 했다. 여기서 ON CONFLICT(player_tag) DO UPDATE 로 병합.
+    #   → 이번 배치에 없는 계정 유지(날짜 누적) + PK·인덱스·다른 단계 컬럼 보존(멱등).
+    t_upsert = BashOperator(
+        task_id="upsert_detection",
+        bash_command=f"cd {PROJECT} && PG_HOST=postgres python upsert_detection.py",
+    )
+
     # ── ④ ML 이상탐지 (IsolationForest) ────────────────────────
-    #   detection_result 피처 → ml_score. preprocess 다음(결과 테이블 필요).
+    #   detection_result 피처 → ml_score. upsert 다음(결과 테이블 필요).
     t_ml = BashOperator(
         task_id="ml_detect",
         bash_command=f"cd {PROJECT} && PG_HOST=postgres python ml_detect.py",
@@ -210,4 +218,4 @@ with DAG(
     )
 
     # 의존성: 날짜결정 → 수집 → 전송 → 전처리 → ML → 승부조작 → 통합점수 → 품질체크
-    t_resolve >> t_fetch >> t_produce >> t_preprocess >> t_ml >> t_mf >> t_combine >> t_qc
+    t_resolve >> t_fetch >> t_produce >> t_preprocess >> t_upsert >> t_ml >> t_mf >> t_combine >> t_qc

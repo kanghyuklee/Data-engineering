@@ -29,6 +29,7 @@ TOPIC = "bs.battles"
 DLQ = "bs.dlq"                                             # 불량 레코드 격리 토픽
 PG_URL = os.environ.get("PG_URL", "jdbc:postgresql://postgres:5432/brawlstars")
 PG_PROPS = {"user": "brawl", "password": "brawl", "driver": "org.postgresql.Driver"}
+STAGING = "detection_result_staging"   # Spark가 이번 실행분을 쓰는 임시 테이블 (upsert 전 단계)
 OUT_PARQUET = os.environ.get("OUT_PARQUET", "/app/data/parquet/battles")
 # 집계 대상 = 매칭전만. 친선전·토너먼트는 상대를 고를 수 있고 트로피 변동도 없어
 #   win_rate·trophy를 왜곡 → 봇/부스팅 신호가 흐려짐. (Parquet 원본엔 전부 유지)
@@ -154,11 +155,14 @@ def main():
                 "brawler_variety", "anomaly_score", "anomaly_reason",
                 "is_injected", "updated_at"))
 
-    # ── 5) PostgreSQL 저장 (결과 스냅샷, overwrite = 재실행해도 멱등) ──
-    #   truncate=true: 테이블을 DROP·재생성하지 않고 TRUNCATE + INSERT 한다.
-    #   → schema.sql의 PK·인덱스가 유지된다 (truncate 없으면 Spark가 테이블을 재생성해 사라짐).
-    (scored.write.mode("overwrite").option("truncate", "true")
-        .jdbc(PG_URL, "detection_result", properties=PG_PROPS))
+    # ── 5) PostgreSQL 저장 — 스테이징에 적재(다음 단계 upsert_detection.py가 병합) ──
+    #   Spark JDBC는 upsert(ON CONFLICT)를 직접 못 하므로, 이번 실행분을 스테이징 테이블에
+    #   overwrite(DROP+CREATE)로 쓴다. 이후 upsert_detection.py가 detection_result로
+    #   ON CONFLICT(player_tag) DO UPDATE 병합한다.
+    #   → 이번 배치에 없는 계정은 지워지지 않고(날짜 누적), ml_score·final_score 등
+    #     다른 단계가 채운 컬럼도 보존된다. (기존 overwrite+truncate는 매번 전체 교체였음)
+    (scored.write.mode("overwrite")
+        .jdbc(PG_URL, STAGING, properties=PG_PROPS))
 
     # ── 입출력 예시 출력 ──────────────────────────────────────────
     # 원본-결과 대조: 입력 = 정제 + DLQ + 중복제거 (조용히 사라진 데이터 없는지)
