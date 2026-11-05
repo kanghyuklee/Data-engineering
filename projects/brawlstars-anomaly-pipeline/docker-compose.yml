@@ -78,6 +78,11 @@ services:
       AIRFLOW__DATABASE__SQL_ALCHEMY_CONN: postgresql+psycopg2://brawl:brawl@postgres/brawlstars
       AIRFLOW__CORE__LOAD_EXAMPLES: "false"
       AIRFLOW__WEBSERVER__DEFAULT_UI_TIMEZONE: Asia/Seoul   # UI 표시 시각을 KST로 (내부 저장은 UTC 유지)
+      # Windows Docker는 파일시스템이 느려 gunicorn 워커 부팅이 기본 120초를 넘겨
+      #   "No response from gunicorn master within 120s" 재시작 루프가 남 → 타임아웃↑·워커↓로 해결.
+      AIRFLOW__WEBSERVER__WEB_SERVER_MASTER_TIMEOUT: "300"
+      AIRFLOW__WEBSERVER__WEB_SERVER_WORKER_TIMEOUT: "300"
+      AIRFLOW__WEBSERVER__WORKERS: "2"
       PROJECT_DIR: /opt/project
     ports:
       - "8081:8080"   # Airflow 웹 UI
