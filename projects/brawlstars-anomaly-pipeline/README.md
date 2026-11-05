@@ -265,7 +265,11 @@ Kafka(bs.battles) ──배치 읽기──┬─ 유효 ─▶ 전처리 ──
 | 자료형 | `event_time` 문자열 → timestamp(UTC, **발생 시각**) | `to_timestamp` |
 | 결측 | 필수 필드(`event_id`·`player_tag`·`event_time`) 없으면 **불량 분리 → `bs.dlq` 격리** | `filter(~valid)` |
 | 중복 | **`event_id` 기준** 중복 제거 (재실행 중복 흡수) | `dropDuplicates(["event_id"])` |
-| 집계 | 계정별 승률·트로피 증감·브롤러 다양성 | `groupBy("player_tag")` |
+| 집계 | 계정별 승률·트로피 증감·브롤러 다양성 (**매칭전만**) | `groupBy("player_tag")` |
+
+> **집계는 매칭전(ranked/soloRanked)만**: 친선전(friendly)·토너먼트는 상대를 직접 고를 수 있고 트로피 변동도 없어 **win_rate를 왜곡** → 집계 대상에서 제외(봇/부스팅 신호가 흐려지지 않게). **Parquet 원본은 전부 보존**(나중에 친선전 분석도 가능).
+> **성능 — `.cache()`**: Kafka에서 읽은 DataFrame을 캐시 → `count`·DLQ쓰기·Parquet·PG 등 **여러 action이 Kafka를 1회만** 읽음(캐시 없으면 action마다 Kafka 재스캔 → 느림·브로커 부하).
+> **원본-결과 대조**: `입력 = 정제 + DLQ + 중복제거` 등식을 출력·검증(`assert`)해 **조용히 사라진 데이터가 없는지** 확인(예: `입력 45709 = 정제 45706 + DLQ 0 + 중복 3`).
 
 ### 입력 · 출력 예시
 
@@ -502,6 +506,12 @@ UI 로그인 비번을 잃으면(이미지 재빌드 시 파일 사라지나 메
 - 원인: 프로젝트가 **OneDrive 동기화 폴더**라, Spark가 `_temporary`에 쓰고 최종 경로로 rename하는 사이 **OneDrive/Windows 마운트가 파일을 건드려** 목록 조회가 불안정. (직접 실행 땐 되다 안 되다 하던 이유)
 - 조치: SparkSession에 **`spark.hadoop.mapreduce.fileoutputcommitter.algorithm.version=2`** — 태스크 출력을 **최종 경로에 바로 커밋**해 `_temporary` rename/merge를 최소화.
 - 부수 확인: 조치 전에도 **retry(지수 백오프)가 일시 실패를 흡수**해 다음 시도에서 성공 → "인프라성 일시 실패는 재시도로 복구"라는 §9① 설계가 **실제로 동작**함을 확인.
+
+**겪은 문제 — 웹서버(8081) 접속 불가 (gunicorn 부팅 타임아웃 루프):**
+- 증상: `localhost:8081`이 안 뜨고 standalone이 계속 재시작하는 듯. 로그에 `webserver_command.py ERROR - No response from gunicorn master within 120 seconds` 반복.
+- 진단: 컨테이너는 `running`·`OOMKilled=false`·메모리 **5%(792MB/15GB)** → **메모리 문제 아님**. 진짜 원인은 **gunicorn 워커가 provider 대량 로딩으로 120초(기본값) 안에 못 떠서** 마스터가 타임아웃→재시작 **무한루프** (Windows Docker 느린 FS가 가중).
+- 조치: compose에 **`WEB_SERVER_MASTER_TIMEOUT=300`·`WEB_SERVER_WORKER_TIMEOUT=300`·`WORKERS=2`** → 워커 부팅 여유 확보 → **약 35초 만에 정상 기동(HTTP 302)** 확인.
+- 교훈: "안 뜸"을 메모리 탓으로 단정하지 않고 **컨테이너 상태(OOM·재시작 횟수)·메모리·로그를 근거로** 진짜 원인(부팅 타임아웃)을 좁힘.
 
 ### 2026-11-04 실제 실행 결과 — upsert 적용 후 전체 run
 
