@@ -74,6 +74,9 @@ def main():
              .config("spark.hadoop.mapreduce.fileoutputcommitter.algorithm.version", "2")
              # dt 파티션 단위 덮어쓰기 → target_date 처리 시 다른 날짜 파티션은 보존.
              .config("spark.sql.sources.partitionOverwriteMode", "dynamic")
+             # 셔플 파티션 200(대용량 클러스터 기본) → 8. 로컬에서 수만 건을 200조각으로
+             #   나누면 조각 생성 비용이 실계산보다 큼. 측정: 전처리 ~98초→~88초(≈11%↓).
+             .config("spark.sql.shuffle.partitions", "8")
              .getOrCreate())
     spark.sparkContext.setLogLevel("WARN")
 
