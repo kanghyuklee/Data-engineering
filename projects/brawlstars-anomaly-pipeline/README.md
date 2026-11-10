@@ -258,8 +258,13 @@ python producer.py --in data/raw --rate 300   # 전송 (초당 300건)
 ```
 → 깨진 3유형 **45건이 정확히 `bs.dlq`로 격리**, 정상 처리는 계속, **원본 = 정제 + DLQ + 중복(유실 0)**. 깨진 건은 버리지 않고 원인과 함께 보관돼 재처리 가능.
 
-**② 처리 중 Spark 종료 → 라이브 테이블 무손상** — 설계 보장
-`preprocess`는 **`detection_result_staging`에만** 쓰고, 라이브 `detection_result`는 `upsert_detection`의 **원자적 `ON CONFLICT` 병합으로만** 갱신된다. 따라서 전처리가 **처리 도중 죽어도 `detection_result`는 직전 정상 상태 그대로**(반쯤 쓰인 상태가 보이지 않음). 재실행하면 `event_id` 중복제거 + upsert로 **같은 결과**(유실·중복 0).
+**② 처리 중 Spark 종료 → 라이브 테이블 무손상** — 실측
+`preprocess`를 **처리 도중 `kill -9`로 강제 종료**하고 `detection_result` 서명을 전후 비교:
+```
+전: 계정 3135 · 배틀합 61580 · 갱신 2026-11-05 11:08:08
+후: 계정 3135 · 배틀합 61580 · 갱신 2026-11-05 11:08:08  ← 동일(무손상)
+```
+`preprocess`는 **`detection_result_staging`에만** 쓰고, 라이브 `detection_result`는 `upsert_detection`의 **원자적 `ON CONFLICT` 병합으로만** 갱신되므로, 전처리가 **죽어도 라이브 테이블은 직전 정상 상태 그대로**(반쯤 쓰인 상태가 보이지 않음). 재실행하면 `event_id` 중복제거 + upsert로 **같은 결과**(유실·중복 0).
 
 **③ Airflow Task 실패 → 재시도 복구** — 실측(§9)
 `spark_preprocess`가 Parquet `_temporary`로 간헐 실패 → **retry(지수 백오프)가 흡수**해 다음 시도에서 success (§9 "실제 구동 기록").
