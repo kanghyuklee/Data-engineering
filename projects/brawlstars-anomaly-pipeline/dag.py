@@ -5,8 +5,9 @@ dag.py — Airflow DAG (수집 → 전송 → 전처리 → 품질체크)
 수동으로 하던  producer.py → spark-submit preprocess.py  순서를 Airflow가 묶는다.
 
 흐름:
-  resolve_target_date → fetch → produce → spark_preprocess → ml_detect → match_fixing → combine_scores → quality_check
-  (처리 날짜 결정)       (수집)  (전송)     (전처리+DLQ+룰)     (ML점수)    (승부조작)      (통합 final_score)  (검증)
+  resolve_target_date → produce → spark_preprocess → upsert_detection → ml_detect → match_fixing → combine_scores → quality_check
+  (처리 날짜 결정)       (리플레이)  (전처리+DLQ+룰)     (스테이징→upsert)   (ML점수)    (승부조작)      (통합)             (검증)
+  (수집 fetch는 제거 — 기존 data/raw 리플레이만. 신규 수집은 호스트에서 수동)
   * target_date 비우면 전체 재처리, 날짜 지정 시 그 날만(backfill) — 리플레이 날짜 매핑
   * 어느 Task든 실패하면 Discord 알림(on_failure_callback)
   * 탐지 3종: 룰(preprocess) + ML/IsolationForest(ml_detect) + 그래프(match_fixing)
@@ -145,14 +146,11 @@ with DAG(
         python_callable=resolve_target_date,
     )
 
-    # ── ① 수집 (Supercell API) ─────────────────────────────────
-    #   API 429·타임아웃은 일시적 → 재시도 O (fetch_battlelogs 에 429 backoff 내장).
-    #   토큰 없이 리플레이만 할 거면 이 Task는 스킵 가능 (기존 data/raw 사용).
-    t_fetch = BashOperator(
-        task_id="fetch_battlelogs",
-        bash_command=(f"cd {PROJECT} && "
-                      f"python fetch_battlelogs.py --max-players {{{{ params.max_players }}}}"),
-    )
+    # ── ① 수집(fetch) 제거 — 리플레이만 ────────────────────────
+    #   data/raw는 이미 수집돼 있음. 매 실행 fetch하면 계정이 계속 불어나 Kafka 중복이 폭증
+    #   (70만 건 중 고유 6만 — 로드 테스트 입력이 흔들림). → fetch 태스크 제거, 기존 data/raw를
+    #   producer로 리플레이만 한다. 신규 수집이 필요하면 호스트에서 수동:
+    #     python fetch_battlelogs.py --max-players N  (→ data/raw 갱신 후 다시 리플레이)
 
     # ── ② 리플레이 전송 → Kafka(bs.battles) ────────────────────
     #   Kafka 연결 일시 끊김 → 재시도 O. event_id 가 결정적이라 재전송해도 중복은 뒤에서 흡수(멱등).
@@ -220,4 +218,4 @@ with DAG(
     )
 
     # 의존성: 날짜결정 → 수집 → 전송 → 전처리 → ML → 승부조작 → 통합점수 → 품질체크
-    t_resolve >> t_fetch >> t_produce >> t_preprocess >> t_upsert >> t_ml >> t_mf >> t_combine >> t_qc
+    t_resolve >> t_produce >> t_preprocess >> t_upsert >> t_ml >> t_mf >> t_combine >> t_qc
