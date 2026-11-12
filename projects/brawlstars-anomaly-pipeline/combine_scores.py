@@ -28,6 +28,24 @@ ML_TH = float(os.environ.get("ML_TH", "0.5"))      # ML 의심 임계
 MF_TH = int(os.environ.get("MF_TH", "5"))          # 승부조작 의심 임계(횟수)
 
 
+def combine_one(rule, ml, mf_cnt, *, mf_cap=MF_CAP, rule_th=RULE_TH, ml_th=ML_TH, mf_th=MF_TH):
+    """세 신호(룰·ML·승부조작)를 MAX로 통합하고, 임계 넘은 신호 이름을 함께 반환.
+    가중합은 한 신호만 강한 계정을 희석시켜 부적합 → MAX. 순수 함수(DB 불필요, 테스트 대상)."""
+    rule = rule or 0.0
+    ml = ml or 0.0
+    mf_cnt = mf_cnt or 0
+    mf_norm = min(mf_cnt / mf_cap, 1.0)          # 횟수(0~)를 0~1로 정규화
+    final = max(rule, ml, mf_norm)
+    flags = []
+    if rule >= rule_th:
+        flags.append("rule")
+    if ml >= ml_th:
+        flags.append("ml")
+    if mf_cnt >= mf_th:
+        flags.append("mf")
+    return round(final, 3), ",".join(flags) or "none"
+
+
 def main():
     conn = psycopg2.connect(**PG)
     cur = conn.cursor()
@@ -39,19 +57,8 @@ def main():
 
     updates = []
     for tag, rule, ml, mf in rows:
-        rule = rule or 0.0
-        ml = ml or 0.0
-        mf_cnt = mf or 0
-        mf_norm = min(mf_cnt / MF_CAP, 1.0)
-        final = max(rule, ml, mf_norm)
-        flags = []
-        if rule >= RULE_TH:
-            flags.append("rule")
-        if ml >= ML_TH:
-            flags.append("ml")
-        if mf_cnt >= MF_TH:
-            flags.append("mf")
-        updates.append((round(final, 3), ",".join(flags) or "none", tag))
+        final, flagged = combine_one(rule, ml, mf)
+        updates.append((final, flagged, tag))
 
     cur.executemany(
         "UPDATE detection_result SET final_score=%s, flagged_by=%s WHERE player_tag=%s",

@@ -1,13 +1,23 @@
 # Brawl Stars 이상 계정(봇·부스팅) 탐지 파이프라인
 
-> 초안임. `TODO` 표시는 직접 돌려보며 확정할 값(샘플 크기·재생 속도 등).
+[![CI](https://github.com/kanghyuklee/Data-engineering/actions/workflows/ci.yml/badge.svg)](https://github.com/kanghyuklee/Data-engineering/actions/workflows/ci.yml)
+
+> **로컬에서 ~6만 건을 ~88초에 처리 · 셔플 튜닝으로 전처리 11%↓ · Spark 강제종료·깨진 메시지 60건에도 유실·중복 0건.**
+> Kafka·Spark·Airflow 배치 파이프라인으로 봇·대리·승부조작 계정을 탐지하고, 멱등·DLQ·장애복구를 **숫자로** 검증했습니다.
+
+**한눈에**
+- **무엇** — 브롤스타즈 배틀 로그 → 계정별 이상 점수(룰 + ML + 그래프 통합)
+- **안정성** — 같은 입력 재실행 결과 동일, Spark `kill`·깨진 메시지에도 유실·중복 0 → [개선이력.md](개선이력.md)
+- **로드 테스트** — `shuffle.partitions` 200→8로 ~98→~88초, 진짜 병목은 중복 11배 재처리 → fetch 제거
+- **빠른 실행** — [실행 방법](#5-kafka-수집) · 토큰 없이 `make_sample.py`로도 가능
+- **측정 환경** — 로컬 Windows 10 · Docker Desktop(CPU 12 · 메모리 15.59GiB) · Spark `local[*]`
 
 ## 한 줄 요약
 
 브롤스타즈 공식 API로 실제 배틀로그를 모아 스트림처럼 재생하고, 봇·대리(트로피 부스팅)·승부조작 같은 이상 계정을 탐지하는 파이프라인.
 탐지만이 목적이 아니라, 트래픽을 올려도 유실·중복 없이 버티는 구조가 진짜 목표임.
 
-- 데이터 — 브롤스타즈 배틀로그(실데이터) + 가짜 이상 계정 소량 주입(정답 라벨).
+- 데이터 — 브롤스타즈 배틀로그(실데이터). 정답 라벨이 없어 비지도·룰·그래프로 후보를 발굴하고, 장애 검증용으로 깨진 메시지를 주입(`dirty_injector.py`)해 DLQ 격리를 확인.
 - 문제 — "이 계정, 봇·대리·조작 아닌가?" 판단.
 - 사용자 — 게임 운영/안티치트 담당자. 대시보드에서 "지금 의심 계정" 확인.
 
@@ -60,9 +70,9 @@ API에 rate limit 있음. 실시간으로 계속 당기면 부하 테스트 불�
 ### 규모 (숫자 두 개 → 용량)
 
 - 건당 크기 ≈ 0.6 KB (opponents 배열 포함 JSON 기준)
-- 수집 규모 — 플레이어 5,000명 × 25전 ≈ 12.5만 배틀 ≈ 약 75 MB (JSON) / Parquet 압축 시 ≈ 15 MB  *(TODO: 실제 수집 후 확정)*
+- 수집 규모 — 설계 추정 5,000명 × 25전 ≈ 12.5만 배틀 ≈ 75 MB(JSON). *(실측 리플레이: 3,352계정 · 63,330건)*
 - 매일 수집 지속 시 ≈ 75 MB/일 → 7일 보관 ≈ 약 525 MB (JSON) / Parquet ≈ 100 MB 내외
-- 재생 속도 — 평상 TODO 300/s, 부하 테스트 TODO 3,000 → 30,000/s
+- 재생 속도 — `--rate`로 조절(기본 300/s, 리플레이는 2,000/s 사용) = 로드 테스트 레버
 - 부하 재생 대역폭 ≈ 30,000/s × 0.6 KB ≈ 18 MB/s (저장이 아니라 Kafka 통과량)
 
 → 저장 부담은 작음(수십~수백 MB). 관건은 저장 용량이 아니라 **부하 시 처리 대역폭**. 실시간 생성이 아니라 리플레이 기반이라 이렇게 해석함.
@@ -80,10 +90,10 @@ API에 rate limit 있음. 실시간으로 계속 당기면 부하 테스트 불�
 
 ![파이프라인 구조도](./architecture.png)
 
-흐름 — 브롤스타즈 API에서 배틀로그 수집 + 가짜 이상 계정 혼합 → 리플레이 생성기로 재생(①) → Kafka 수신(②) → Spark가 계정별로 승률·연승·플레이 간격·트로피 변화 집계 후 이상 스코어 산정(③) → 결과는 PostgreSQL, 원본은 Parquet 저장(④) → FastAPI·Streamlit으로 노출(⑤). 전 구간을 Airflow가 오케스트레이션, Grafana로 모니터링.
+흐름 — 배틀로그 수집(`fetch_battlelogs.py`) → 리플레이 재생(`producer.py`, ①) → Kafka `bs.battles`(불량은 `bs.dlq`로 격리, ②) → Spark **배치** 전처리·정제·멱등·룰 스코어(③) → 원본은 Parquet, 결과는 staging→**UPSERT**→PostgreSQL(④) → ML(IsolationForest)·그래프(승부조작)·통합 점수(⑤) → 품질검사 후 게시. 전 구간을 **Airflow DAG(@daily KST)**가 순차 실행. *(Grafana 모니터링·FastAPI 서빙은 확장 계획)*
 
 - 수집→Kafka — JSON 이벤트, 배속 재생, `key=player_tag`
-- Kafka→Spark — micro-batch(trigger 1분), 계정별 집계
+- Kafka→Spark — **배치 read**(earliest~latest 전체 재처리 → 멱등), 계정별 집계
 - Spark→PG — 탐지 결과 upsert(player_tag 기준)
 - Spark→Parquet — 원본 append, 날짜(dt=) 파티셔닝, 재처리용
 - 전 구간→Grafana — 처리량·consumer lag·에러율·탐지 지연 관측 + 임계 초과 시 알림
@@ -138,7 +148,10 @@ brawlstars-anomaly-pipeline/
 ├─ create_topics.sh      # Kafka 토픽(bs.battles·bs.dlq) 생성
 ├─ docker-compose.yml    # Kafka(KRaft)·Spark·Airflow·PostgreSQL·Grafana
 ├─ Dockerfile.airflow    # Airflow 커스텀 이미지(docker CLI + deps)
+├─ tests/                # pytest 단위 테스트(순수 로직 — DB/Spark 불필요)
+├─ requirements-dev.txt  # 테스트·린트 의존성(pytest·ruff)
 └─ README.md
+# CI: 리포 루트 .github/workflows/ci.yml (ruff 스모크 + pytest)
 ```
 
 ## 5. Kafka 수집
@@ -563,7 +576,7 @@ UI 로그인 비번을 잃으면(이미지 재빌드 시 파일 사라지나 메
 
 ### 로드 테스트 — 병목 찾기·개선 (`shuffle.partitions`)
 
-**방법**: 입력(Kafka)을 고정하고 전처리 설정 하나만 바꿔 **같은 조건 2회** 측정(워밍업으로 JVM·ivy 캐시 제외). 환경: 로컬 Windows Docker, Spark `local[*]`, 집계 대상 매칭전 ~6만 건.
+**방법**: 입력(Kafka)을 고정하고 전처리 설정 하나만 바꿔 **같은 조건 2회** 측정(워밍업으로 JVM·ivy 캐시 제외). 환경: 로컬 Windows 10 · Docker Desktop(**CPU 12 · 메모리 15.59GiB**) · Spark `local[*]` · 집계 대상 매칭전 ~6만 건.
 
 **가설**: `spark.sql.shuffle.partitions` 기본 **200**은 대용량 클러스터 기준값 — 로컬에서 수만 건을 200조각으로 나누면 **조각 생성 비용이 실계산보다 큼** → **8(코어×2)로 줄이면 배치 시간 10%대 단축** 예상.
 

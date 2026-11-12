@@ -35,31 +35,44 @@ THRESHOLD = int(os.environ.get("MF_THRESHOLD", "5"))  # 같은 상대 이 횟수
 MATCHMADE = set(os.environ.get("MF_TYPES", "ranked,soloRanked").split(","))
 
 
+def opponent_pairs(rows, matchmade=MATCHMADE):
+    """정제 이벤트에서 (계정 A, 상대 B) 쌍의 빈도를 센다.
+    매칭전(ranked/soloRanked)만 — 친선전·토너먼트는 상대를 고를 수 있어 제외. 자기 자신 제외.
+    순수 함수(Parquet·DB 불필요, 테스트 대상)."""
+    pair = Counter()
+    for r in rows:
+        if r["type"] not in matchmade:
+            continue
+        a, opps = r["player_tag"], (r["opponents"] or [])
+        for b in opps:
+            if b and b != a:
+                pair[(a, b)] += 1
+    return pair
+
+
+def max_repeat_by_account(pair):
+    """계정별 '한 상대를 최대 몇 번 만났나'와 그 상대를 반환. 순수 함수."""
+    max_rep, max_opp = defaultdict(int), {}
+    for (a, b), c in pair.items():
+        if c > max_rep[a]:
+            max_rep[a], max_opp[a] = c, b
+    return max_rep, max_opp
+
+
 def main():
     t = (ds.dataset(PARQUET, format="parquet", partitioning="hive")
          .to_table(columns=["player_tag", "opponents", "type"]))
     rows = t.to_pylist()
 
     # (A, B) = A가 B를 상대로 만난 횟수 (매칭전만 — 친선전·토너먼트 제외)
-    pair = Counter()
-    used = 0
-    for r in rows:
-        if r["type"] not in MATCHMADE:          # 상대 선택 가능한 대전은 제외
-            continue
-        used += 1
-        a, opps = r["player_tag"], (r["opponents"] or [])
-        for b in opps:
-            if b and b != a:
-                pair[(a, b)] += 1
+    pair = opponent_pairs(rows)
+    used = sum(1 for r in rows if r["type"] in MATCHMADE)
 
     print(f"전체 {len(rows)}건 중 매칭전({'/'.join(sorted(MATCHMADE))}) {used}건만 사용 "
           f"(친선전·토너먼트·챌린지 제외)")
 
     # 계정별 '한 상대를 최대 몇 번 만났나' + 그 상대
-    max_rep, max_opp = defaultdict(int), {}
-    for (a, b), c in pair.items():
-        if c > max_rep[a]:
-            max_rep[a], max_opp[a] = c, b
+    max_rep, max_opp = max_repeat_by_account(pair)
 
     print(f"이벤트 {len(rows)}건 · 상대 쌍 {len(pair)}개 · 의심 임계 {THRESHOLD}회")
 

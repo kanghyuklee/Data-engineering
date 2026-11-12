@@ -1,0 +1,31 @@
+name: CI (brawlstars-anomaly-pipeline)
+
+# 브롤스타즈 파이프라인 디렉터리 변경 시에만 실행 (모노레포라 경로 필터)
+on:
+  push:
+    paths: ["projects/brawlstars-anomaly-pipeline/**"]
+  pull_request:
+    paths: ["projects/brawlstars-anomaly-pipeline/**"]
+
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: projects/brawlstars-anomaly-pipeline
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+          cache: pip
+
+      - name: 의존성 설치 (테스트에 필요한 최소)
+        run: pip install pyarrow psycopg2-binary pytest ruff
+
+      - name: 린트 (ruff — 구문 오류·미정의 이름 스모크)
+        run: ruff check --select E9,F63,F7,F82 .
+
+      - name: 단위 테스트 (pytest — 순수 로직, DB/Spark 불필요)
+        run: pytest -q
