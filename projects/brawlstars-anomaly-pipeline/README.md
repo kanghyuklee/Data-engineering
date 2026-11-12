@@ -2,8 +2,8 @@
 
 [![CI](https://github.com/kanghyuklee/Data-engineering/actions/workflows/ci.yml/badge.svg)](https://github.com/kanghyuklee/Data-engineering/actions/workflows/ci.yml)
 
-> **로컬에서 ~6만 건을 ~88초에 처리 · 셔플 튜닝으로 전처리 11%↓ · Spark 강제종료·깨진 메시지 60건에도 유실·중복 0건.**
-> Kafka·Spark·Airflow 배치 파이프라인으로 봇·대리·승부조작 계정을 탐지하고, 멱등·DLQ·장애복구를 **숫자로** 검증했습니다.
+> 브롤스타즈 배틀 로그로 봇·대리(트로피 부스팅)·승부조작 계정을 탐지하는 Kafka·Spark·Airflow 배치 파이프라인입니다.
+> 로컬에서 약 6만 건을 88초에 처리하고, 셔플 파티션을 200에서 8로 줄여 전처리를 11% 단축했습니다. Spark를 강제 종료하거나 깨진 메시지 60건을 섞어도 유실·중복은 0건이었습니다.
 
 **한눈에**
 - **무엇** — 브롤스타즈 배틀 로그 → 계정별 이상 점수(룰 + ML + 그래프 통합)
