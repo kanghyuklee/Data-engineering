@@ -10,10 +10,20 @@ data/
 
 # 실행 증빙 스크린샷 (로컬 전용, architecture.png는 예외로 커밋됨)
 *_capture*.png
+# 발표용 증빙 캡처 (멱등·rate 실험 등 — 로컬 전용)
+first_play.PNG
+second_play.PNG
+rate1.PNG
+rate2.PNG
+rate3.PNG
 
 # 로컬 전용 메모
 NOTES.md
 WORKLOG.md
+발표_초안.md
+데모_대본.md
+발표대본.md
+최종발표.html
 
 # 파이썬
 __pycache__/

@@ -124,17 +124,20 @@ API에 rate limit 있음. 실시간으로 계속 당기면 부하 테스트 불�
 
 ```
 brawlstars-anomaly-pipeline/
-├─ fetch_battlelogs.py  # 브롤스타즈 API 크롤 → 배틀로그 JSON 저장
-├─ producer.py   # 배틀로그를 battle 이벤트로 재생해 Kafka로, 속도 조절
-├─ anomaly_injector.py  # 가짜 이상 계정(봇·부스팅) 배틀 주입 (라벨)
-├─ consumer.py          # Kafka 수신 → 원본 Parquet 적재
-├─ preprocess.py        # Spark 전처리·계정별 집계·이상 스코어
-├─ dag.py               # Airflow DAG (수집~집계·품질체크)
-├─ schema.sql           # PostgreSQL 저장 스키마
-├─ create_topics.sh     # Kafka 토픽(bs.battles·bs.dlq) 생성
-├─ make_sample.py       # 토큰 없이 테스트용 가짜 배틀로그 생성
-├─ docker-compose.yml   # Kafka(KRaft)·Spark·Airflow·PostgreSQL·Grafana
-├─ api/                 # (선택) FastAPI 서빙 + Streamlit 대시보드
+├─ fetch_battlelogs.py   # 브롤스타즈 API 크롤 → 배틀로그 JSON 저장
+├─ producer.py           # 배틀로그를 battle 이벤트로 재생(리플레이)해 Kafka로, 속도 조절(--rate)
+├─ dirty_injector.py     # 깨진 메시지 주입 → DLQ 격리 검증(장애 테스트)
+├─ make_sample.py        # 토큰 없이 테스트용 가짜 배틀로그 생성
+├─ preprocess.py         # Spark 전처리·정제·멱등·계정별 집계·룰 스코어 → Parquet + staging
+├─ upsert_detection.py   # staging → detection_result 병합(ON CONFLICT UPSERT)
+├─ ml_detect.py          # IsolationForest(비지도) ml_score
+├─ match_fixing.py       # 승부조작(상대 반복 쌍) 탐지 max_opp_repeat
+├─ combine_scores.py     # 룰·ML·그래프 통합 점수(final_score·flagged_by)
+├─ dag.py                # Airflow DAG (리플레이~통합점수·품질체크)
+├─ schema.sql            # PostgreSQL 저장 스키마
+├─ create_topics.sh      # Kafka 토픽(bs.battles·bs.dlq) 생성
+├─ docker-compose.yml    # Kafka(KRaft)·Spark·Airflow·PostgreSQL·Grafana
+├─ Dockerfile.airflow    # Airflow 커스텀 이미지(docker CLI + deps)
 └─ README.md
 ```
 
