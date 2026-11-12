@@ -136,6 +136,7 @@ API에 rate limit 있음. 실시간으로 계속 당기면 부하 테스트 불�
 brawlstars-anomaly-pipeline/
 ├─ fetch_battlelogs.py   # 브롤스타즈 API 크롤 → 배틀로그 JSON 저장
 ├─ producer.py           # 배틀로그를 battle 이벤트로 재생(리플레이)해 Kafka로, 속도 조절(--rate)
+├─ consumer.py           # Kafka 수신 소비자(별도 컨슈머 그룹 — 원본 Parquet 적재·수신 검증)
 ├─ dirty_injector.py     # 깨진 메시지 주입 → DLQ 격리 검증(장애 테스트)
 ├─ make_sample.py        # 토큰 없이 테스트용 가짜 배틀로그 생성
 ├─ preprocess.py         # Spark 전처리·정제·멱등·계정별 집계·룰 스코어 → Parquet + staging
