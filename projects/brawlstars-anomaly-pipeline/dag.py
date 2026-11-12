@@ -48,7 +48,10 @@ from airflow.operators.python import PythonOperator
 
 # ── 설정 (환경변수로 덮어쓰기 가능) ──────────────────────────────
 PROJECT = os.environ.get("PROJECT_DIR", "/opt/project")        # 프로젝트 마운트 경로
-PG = dict(host="postgres", port=5432, db="brawlstars", user="brawl", password="brawl")
+PG = dict(host=os.environ.get("PG_HOST", "postgres"), port=5432,
+          db=os.environ.get("PG_DB", "brawlstars"),
+          user=os.environ.get("PG_USER", "brawl"),
+          password=os.environ.get("PG_PASSWORD", "brawl"))
 
 # ── 공통 재시도 정책: 일시적 실패는 점점 더 기다렸다 다시 ────────────
 default_args = {

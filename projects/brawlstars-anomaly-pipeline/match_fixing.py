@@ -27,7 +27,9 @@ PARQUET = os.environ.get("OUT_PARQUET_HOST", "data/parquet/battles")
 PG = dict(
     host=os.environ.get("PG_HOST", "localhost"),
     port=int(os.environ.get("PG_PORT", "5432")),
-    dbname="brawlstars", user="brawl", password="brawl",
+    dbname=os.environ.get("PG_DB", "brawlstars"),
+    user=os.environ.get("PG_USER", "brawl"),
+    password=os.environ.get("PG_PASSWORD", "brawl"),
 )
 THRESHOLD = int(os.environ.get("MF_THRESHOLD", "5"))  # 같은 상대 이 횟수 이상 = 의심
 # 매칭 기반 대전만 분석. 친선전(friendly)·토너먼트·챌린지는 상대를 직접 고를 수 있어

@@ -20,7 +20,9 @@ import psycopg2
 PG = dict(
     host=os.environ.get("PG_HOST", "localhost"),
     port=int(os.environ.get("PG_PORT", "5432")),
-    dbname="brawlstars", user="brawl", password="brawl",
+    dbname=os.environ.get("PG_DB", "brawlstars"),
+    user=os.environ.get("PG_USER", "brawl"),
+    password=os.environ.get("PG_PASSWORD", "brawl"),
 )
 MF_CAP = float(os.environ.get("MF_CAP", "10"))     # 승부조작 정규화 상한(이 횟수면 1.0)
 RULE_TH = float(os.environ.get("RULE_TH", "0.6"))  # 룰 의심 임계

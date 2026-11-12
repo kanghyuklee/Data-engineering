@@ -33,9 +33,9 @@ services:
     ports:
       - "5432:5432"
     environment:
-      POSTGRES_USER: brawl
-      POSTGRES_PASSWORD: brawl       # TODO: .env로 빼기
-      POSTGRES_DB: brawlstars
+      POSTGRES_USER: ${POSTGRES_USER:-brawl}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-brawl}   # .env로 주입(없으면 기본값). 공유/운영 시 반드시 변경
+      POSTGRES_DB: ${POSTGRES_DB:-brawlstars}
     volumes:
       - ./schema.sql:/docker-entrypoint-initdb.d/schema.sql:ro
       - pgdata:/var/lib/postgresql/data
@@ -75,7 +75,7 @@ services:
       - spark
     environment:
       AIRFLOW__CORE__EXECUTOR: LocalExecutor
-      AIRFLOW__DATABASE__SQL_ALCHEMY_CONN: postgresql+psycopg2://brawl:brawl@postgres/brawlstars
+      AIRFLOW__DATABASE__SQL_ALCHEMY_CONN: postgresql+psycopg2://${POSTGRES_USER:-brawl}:${POSTGRES_PASSWORD:-brawl}@postgres/${POSTGRES_DB:-brawlstars}
       AIRFLOW__CORE__LOAD_EXAMPLES: "false"
       AIRFLOW__WEBSERVER__DEFAULT_UI_TIMEZONE: Asia/Seoul   # UI 표시 시각을 KST로 (내부 저장은 UTC 유지)
       # Windows Docker는 파일시스템이 느려 gunicorn 워커 부팅이 기본 120초를 넘겨
@@ -101,7 +101,7 @@ services:
     ports:
       - "3000:3000"   # Grafana 웹 UI (admin / admin)
     environment:
-      GF_SECURITY_ADMIN_PASSWORD: admin   # TODO: .env로 빼기
+      GF_SECURITY_ADMIN_PASSWORD: ${GRAFANA_ADMIN_PASSWORD:-admin}   # .env로 주입(없으면 기본값)
     volumes:
       - grafana-data:/var/lib/grafana
     # 데이터 소스 설정은 UI에서:

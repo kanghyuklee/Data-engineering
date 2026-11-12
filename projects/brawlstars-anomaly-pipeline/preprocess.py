@@ -28,7 +28,9 @@ KAFKA = os.environ.get("KAFKA_BOOTSTRAP", "kafka:29092")   # 컨테이너 내부
 TOPIC = "bs.battles"
 DLQ = "bs.dlq"                                             # 불량 레코드 격리 토픽
 PG_URL = os.environ.get("PG_URL", "jdbc:postgresql://postgres:5432/brawlstars")
-PG_PROPS = {"user": "brawl", "password": "brawl", "driver": "org.postgresql.Driver"}
+PG_PROPS = {"user": os.environ.get("PG_USER", "brawl"),
+            "password": os.environ.get("PG_PASSWORD", "brawl"),
+            "driver": "org.postgresql.Driver"}
 STAGING = "detection_result_staging"   # Spark가 이번 실행분을 쓰는 임시 테이블 (upsert 전 단계)
 OUT_PARQUET = os.environ.get("OUT_PARQUET", "/app/data/parquet/battles")
 # 집계 대상 = 매칭전만. 친선전·토너먼트는 상대를 고를 수 있고 트로피 변동도 없어

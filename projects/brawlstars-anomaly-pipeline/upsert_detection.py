@@ -23,7 +23,9 @@ import psycopg2
 PG = dict(
     host=os.environ.get("PG_HOST", "localhost"),
     port=int(os.environ.get("PG_PORT", "5432")),
-    dbname="brawlstars", user="brawl", password="brawl",
+    dbname=os.environ.get("PG_DB", "brawlstars"),
+    user=os.environ.get("PG_USER", "brawl"),
+    password=os.environ.get("PG_PASSWORD", "brawl"),
 )
 STAGING = "detection_result_staging"
 
